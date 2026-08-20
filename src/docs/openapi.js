@@ -282,6 +282,36 @@ const paths = {
 			],
 		}),
 	},
+	'/api/v1/merchant/finance/account': {
+		get: operation('商户资金账户', '商户财务', {
+			auth: true,
+			parameters: [queryParameter('shopId', id, '店铺 ID')],
+		}),
+	},
+	'/api/v1/merchant/finance/ledger': {
+		get: operation('商户资金流水', '商户财务', {
+			auth: true,
+			parameters: [queryParameter('shopId', id, '店铺 ID'), ...pagination],
+		}),
+	},
+	'/api/v1/merchant/finance/settlements/create': {
+		post: operation('生成商户结算单', '商户财务', { auth: true, body: schema('MerchantSettlementInput') }),
+	},
+	'/api/v1/merchant/finance/settlements': {
+		get: operation('商户结算单列表', '商户财务', {
+			auth: true,
+			parameters: [queryParameter('shopId', id, '店铺 ID'), ...pagination],
+		}),
+	},
+	'/api/v1/merchant/finance/withdrawals/create': {
+		post: operation('申请提现', '商户财务', { auth: true, body: schema('MerchantWithdrawalInput') }),
+	},
+	'/api/v1/merchant/finance/withdrawals': {
+		get: operation('商户提现记录', '商户财务', {
+			auth: true,
+			parameters: [queryParameter('shopId', id, '店铺 ID'), ...pagination],
+		}),
+	},
 	'/api/v1/merchant/orders/export': {
 		get: operation('商户导出订单 CSV', '商户经营分析', {
 			auth: true,
@@ -686,6 +716,15 @@ const paths = {
 			body: schema('ArbitrationResolveInput'),
 		}),
 	},
+	'/api/v1/admin/finance/withdrawals': {
+		get: operation('平台提现审核列表', '平台财务', { admin: true, parameters: pagination }),
+	},
+	'/api/v1/admin/finance/withdrawals/review': {
+		post: operation('审核或完成提现', '平台财务', { admin: true, body: schema('WithdrawalReviewInput') }),
+	},
+	'/api/v1/admin/shops/commission/update': {
+		post: operation('设置店铺佣金比例', '平台财务', { admin: true, body: schema('CommissionUpdateInput') }),
+	},
 }
 
 export const openapiDocument = {
@@ -1057,6 +1096,56 @@ export const openapiDocument = {
 					decision: { type: 'string', enum: ['APPROVE', 'REJECT'] },
 					approvedAmount: { ...money, minimum: 1 },
 					remark: { type: 'string', minLength: 2, maxLength: 500 },
+				},
+			},
+			MerchantSettlementInput: {
+				type: 'object',
+				required: ['shopId', 'clientRequestId', 'periodStart', 'periodEnd'],
+				properties: {
+					shopId: id,
+					clientRequestId: { type: 'string', minLength: 8, maxLength: 64 },
+					periodStart: dateTime,
+					periodEnd: dateTime,
+				},
+			},
+			MerchantWithdrawalInput: {
+				type: 'object',
+				required: ['shopId', 'clientRequestId', 'amount', 'accountInfo'],
+				properties: {
+					shopId: id,
+					clientRequestId: { type: 'string', minLength: 8, maxLength: 64 },
+					amount: { ...money, minimum: 1 },
+					accountInfo: {
+						type: 'object',
+						required: ['bankName', 'accountName', 'accountNo'],
+						properties: {
+							bankName: { type: 'string', maxLength: 100 },
+							accountName: { type: 'string', maxLength: 100 },
+							accountNo: { type: 'string', maxLength: 100 },
+						},
+					},
+				},
+			},
+			WithdrawalReviewInput: {
+				type: 'object',
+				required: ['id', 'action', 'remark'],
+				properties: {
+					id,
+					action: { type: 'string', enum: ['APPROVE', 'REJECT', 'COMPLETE'] },
+					remark: { type: 'string', minLength: 2, maxLength: 500 },
+				},
+			},
+			CommissionUpdateInput: {
+				type: 'object',
+				required: ['shopId', 'commissionRateBps'],
+				properties: {
+					shopId: id,
+					commissionRateBps: {
+						type: 'integer',
+						minimum: 0,
+						maximum: 10000,
+						description: '万分比，500 表示 5%',
+					},
 				},
 			},
 			ChannelRefundInput: {

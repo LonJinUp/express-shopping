@@ -7,3 +7,5 @@ function value(prefix, now = new Date()) {
 
 export const createAfterSaleNo = () => value('A')
 export const createRefundNo = () => value('R')
+export const createSettlementNo = () => value('S')
+export const createWithdrawalNo = () => value('W')

@@ -6,6 +6,7 @@ import { createPaymentNo } from '../utils/paymentNo.js'
 import { env } from '../config/env.js'
 import { logger } from '../config/logger.js'
 import { getPaymentChannel, normalizePaymentQueryResult } from './paymentChannelService.js'
+import { recordPaymentRevenue } from './merchantFinanceService.js'
 
 function nextPaymentQueryAt(now = new Date()) {
 	return new Date(now.getTime() + env.PAYMENT_QUERY_INTERVAL_SECONDS * 1000)
@@ -123,6 +124,7 @@ export async function mockPay(userId, input) {
 						remark: '模拟支付成功',
 					},
 				})
+				await recordPaymentRevenue(tx, created.id)
 				return created
 			},
 			{ isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
@@ -179,6 +181,7 @@ async function applySuccessfulPayment(tx, payment, transactionId, remark) {
 		where: { id: payment.id },
 		data: { status: 'SUCCESS', transactionId, paidAt },
 	})
+	await recordPaymentRevenue(tx, payment.id)
 	await tx.orderLog.create({
 		data: { orderId: order.id, fromStatus: 'PENDING_PAYMENT', toStatus: 'PAID', action: 'PAY_CALLBACK', remark },
 	})

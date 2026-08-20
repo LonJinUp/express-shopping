@@ -100,6 +100,15 @@ const requiredOperations = [
 	['post', '/api/v1/admin/after-sales/mock-refund'],
 	['get', '/api/v1/admin/after-sales/arbitrations'],
 	['post', '/api/v1/admin/after-sales/arbitrations/resolve'],
+	['get', '/api/v1/merchant/finance/account'],
+	['get', '/api/v1/merchant/finance/ledger'],
+	['post', '/api/v1/merchant/finance/settlements/create'],
+	['get', '/api/v1/merchant/finance/settlements'],
+	['post', '/api/v1/merchant/finance/withdrawals/create'],
+	['get', '/api/v1/merchant/finance/withdrawals'],
+	['get', '/api/v1/admin/finance/withdrawals'],
+	['post', '/api/v1/admin/finance/withdrawals/review'],
+	['post', '/api/v1/admin/shops/commission/update'],
 ]
 
 describe('OpenAPI document', () => {

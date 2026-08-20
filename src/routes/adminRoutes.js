@@ -7,6 +7,7 @@ import { adminOrderRouter } from './adminOrderRoutes.js'
 import { adminPromotionRouter } from './adminPromotionRoutes.js'
 import { adminReviewRouter } from './adminReviewRoutes.js'
 import { adminMerchantRouter } from './adminMerchantRoutes.js'
+import { adminFinanceRouter } from './adminFinanceRoutes.js'
 
 export const adminRouter = Router()
 adminRouter.use(auditAdminAction)
@@ -17,3 +18,4 @@ adminRouter.use(adminReviewRouter)
 adminRouter.use(adminPromotionRouter)
 adminRouter.use(adminOperationsRouter)
 adminRouter.use(adminMerchantRouter)
+adminRouter.use(adminFinanceRouter)

@@ -217,3 +217,19 @@
 | POST | `/api/v1/merchant/after-sales/mock-refund`    | OWNER/ADMIN | body     | 开发环境模拟退款     |
 | GET  | `/api/v1/merchant/analytics/dashboard`        | 商户成员    | query    | 当前店铺经营看板     |
 | GET  | `/api/v1/merchant/orders/export`              | OWNER/ADMIN | query    | 导出当前店铺订单 CSV |
+
+### 商户财务
+
+| 方法 | 路径                                          | 权限        | 说明                           |
+| ---- | --------------------------------------------- | ----------- | ------------------------------ |
+| GET  | `/api/v1/merchant/finance/account`            | 商户成员    | 待结算、可用、冻结和已提现余额 |
+| GET  | `/api/v1/merchant/finance/ledger`             | 商户成员    | 支付、退款、结算和提现流水     |
+| POST | `/api/v1/merchant/finance/settlements/create` | OWNER/ADMIN | 按订单完成周期生成结算单       |
+| GET  | `/api/v1/merchant/finance/settlements`        | 商户成员    | 结算单及订单明细               |
+| POST | `/api/v1/merchant/finance/withdrawals/create` | OWNER/ADMIN | 从可用余额申请提现             |
+| GET  | `/api/v1/merchant/finance/withdrawals`        | 商户成员    | 提现记录                       |
+| GET  | `/api/v1/admin/finance/withdrawals`           | ADMIN       | 平台提现审核列表               |
+| POST | `/api/v1/admin/finance/withdrawals/review`    | ADMIN       | 批准、驳回或完成打款           |
+| POST | `/api/v1/admin/shops/commission/update`       | ADMIN       | 设置店铺佣金万分比             |
+
+金额统一使用“分”，`commissionRateBps` 使用万分比，例如 `500` 表示 5%。支付成功后商户净收入进入待结算余额；只有已完成订单可以生成结算单并转入可用余额。提现申请会冻结可用余额，平台驳回时原路恢复，完成打款后计入累计提现。

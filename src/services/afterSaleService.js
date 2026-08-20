@@ -5,6 +5,7 @@ import { AppError } from '../errors/AppError.js'
 import { createAfterSaleNo, createRefundNo } from '../utils/transactionNo.js'
 import { buildAfterSaleOverdueWhere } from './afterSaleReminderService.js'
 import { calculateAfterSaleAmount } from './refundCalculationService.js'
+import { recordRefundReversal } from './merchantFinanceService.js'
 
 const activeStatuses = ['PENDING', 'ARBITRATING', 'APPROVED', 'WAITING_RETURN', 'RETURNED', 'REFUNDING']
 const applicableOrderStatuses = ['PAID', 'PROCESSING', 'SHIPPED', 'COMPLETED']
@@ -625,6 +626,7 @@ async function completeRefund(tx, refund, afterSale, operatorId, transactionId, 
 		where: { id: afterSale.id },
 		data: { status: 'COMPLETED', completedAt: new Date() },
 	})
+	await recordRefundReversal(tx, refund.id)
 	await tx.afterSaleLog.create({
 		data: {
 			afterSaleId: afterSale.id,

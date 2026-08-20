@@ -57,6 +57,50 @@ const checks = [
 			WHERE a.status = 'COMPLETED' AND (r.id IS NULL OR r.status <> 'SUCCESS')
 		`,
 	},
+	{
+		name: '成功支付缺少商户收入流水',
+		query: `
+			SELECT p.id, p.paymentNo
+			FROM Payment p
+			LEFT JOIN MerchantLedgerEntry l ON l.type = 'PAYMENT' AND l.referenceId = p.id
+			WHERE p.status IN ('SUCCESS', 'PARTIALLY_REFUNDED', 'REFUNDED') AND l.id IS NULL
+		`,
+	},
+	{
+		name: '成功退款缺少商户冲销流水',
+		query: `
+			SELECT r.id, r.refundNo
+			FROM Refund r
+			LEFT JOIN MerchantLedgerEntry l ON l.type = 'REFUND' AND l.referenceId = r.id
+			WHERE r.status = 'SUCCESS' AND l.id IS NULL
+		`,
+	},
+	{
+		name: '商户账户余额与流水不一致',
+		query: `
+			SELECT a.merchantId
+			FROM MerchantAccount a
+			LEFT JOIN MerchantLedgerEntry l ON l.merchantId = a.merchantId
+			GROUP BY a.merchantId, a.pendingAmount, a.availableAmount, a.frozenAmount, a.withdrawnAmount
+			HAVING a.pendingAmount <> COALESCE(SUM(l.pendingAmountDiff), 0)
+				OR a.availableAmount <> COALESCE(SUM(l.availableAmountDiff), 0)
+				OR a.frozenAmount <> COALESCE(SUM(l.frozenAmountDiff), 0)
+				OR a.withdrawnAmount <> COALESCE(SUM(l.withdrawnAmountDiff), 0)
+		`,
+	},
+	{
+		name: '结算单金额与订单明细不一致',
+		query: `
+			SELECT s.id, s.settlementNo
+			FROM MerchantSettlement s
+			LEFT JOIN MerchantSettlementOrder o ON o.settlementId = s.id
+			GROUP BY s.id, s.settlementNo, s.grossAmount, s.refundAmount, s.commissionAmount, s.netAmount
+			HAVING s.grossAmount <> COALESCE(SUM(o.grossAmount), 0)
+				OR s.refundAmount <> COALESCE(SUM(o.refundAmount), 0)
+				OR s.commissionAmount <> COALESCE(SUM(o.commissionAmount), 0)
+				OR s.netAmount <> COALESCE(SUM(o.netAmount), 0)
+		`,
+	},
 ]
 
 const report = {

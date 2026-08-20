@@ -106,6 +106,22 @@ enum AfterSaleArbitrationDecision {
   REJECT
 }
 
+enum MerchantLedgerType {
+  PAYMENT
+  REFUND
+  SETTLEMENT
+  WITHDRAWAL
+  WITHDRAWAL_RESTORE
+  WITHDRAWAL_COMPLETE
+}
+
+enum MerchantWithdrawalStatus {
+  PENDING
+  APPROVED
+  COMPLETED
+  REJECTED
+}
+
 enum RefundStatus {
   PENDING
   SUCCESS
@@ -140,34 +156,41 @@ enum MerchantMemberStatus {
 }
 
 model Merchant {
-  id           String               @id @default(cuid()) @db.VarChar(30)
-  name         String               @db.VarChar(120)
-  code         String               @unique @db.VarChar(50)
-  contactName  String?              @db.VarChar(80)
-  contactPhone String?              @db.VarChar(30)
-  status       MerchantStatus       @default(ACTIVE)
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
-  shops        Shop[]
-  members      MerchantMember[]
-  application  MerchantApplication?
+  id            String                @id @default(cuid()) @db.VarChar(30)
+  name          String                @db.VarChar(120)
+  code          String                @unique @db.VarChar(50)
+  contactName   String?               @db.VarChar(80)
+  contactPhone  String?               @db.VarChar(30)
+  status        MerchantStatus        @default(ACTIVE)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  shops         Shop[]
+  members       MerchantMember[]
+  application   MerchantApplication?
+  account       MerchantAccount?
+  ledgerEntries MerchantLedgerEntry[]
+  settlements   MerchantSettlement[]
+  withdrawals   MerchantWithdrawal[]
 }
 
 model Shop {
-  id                String             @id @default(cuid()) @db.VarChar(30)
-  merchantId        String             @db.VarChar(30)
-  name              String             @db.VarChar(120)
-  code              String             @unique @db.VarChar(50)
-  description       String?            @db.VarChar(500)
-  logoUrl           String?            @db.VarChar(500)
-  status            ShopStatus         @default(ACTIVE)
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  merchant          Merchant           @relation(fields: [merchantId], references: [id])
+  id                String                    @id @default(cuid()) @db.VarChar(30)
+  merchantId        String                    @db.VarChar(30)
+  name              String                    @db.VarChar(120)
+  code              String                    @unique @db.VarChar(50)
+  description       String?                   @db.VarChar(500)
+  logoUrl           String?                   @db.VarChar(500)
+  status            ShopStatus                @default(ACTIVE)
+  commissionRateBps Int                       @default(500) @db.UnsignedSmallInt
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  merchant          Merchant                  @relation(fields: [merchantId], references: [id])
   products          Product[]
   orders            Order[]
   coupons           Coupon[]
   shippingTemplates ShippingTemplate[]
+  ledgerEntries     MerchantLedgerEntry[]
+  settlementOrders  MerchantSettlementOrder[]
 
   @@index([merchantId])
 }
@@ -196,6 +219,8 @@ model User {
   afterSales                    AfterSale[]
   afterSaleArbitrations         AfterSaleArbitration[] @relation("AfterSaleArbitrationApplicant")
   resolvedAfterSaleArbitrations AfterSaleArbitration[] @relation("AfterSaleArbitrationResolver")
+  requestedMerchantWithdrawals  MerchantWithdrawal[]   @relation("MerchantWithdrawalRequester")
+  reviewedMerchantWithdrawals   MerchantWithdrawal[]   @relation("MerchantWithdrawalReviewer")
   merchantApplications          MerchantApplication[]  @relation("MerchantApplicationApplicant")
   reviewedMerchantApplications  MerchantApplication[]  @relation("MerchantApplicationReviewer")
   merchantMemberships           MerchantMember[]
@@ -472,40 +497,42 @@ model CartItem {
 }
 
 model Order {
-  id              String         @id @default(cuid()) @db.VarChar(30)
-  orderNo         String         @unique @db.VarChar(32)
-  clientRequestId String         @db.VarChar(64)
-  userId          String         @db.VarChar(30)
-  shopId          String         @db.VarChar(30)
-  platformOrderId String?        @db.VarChar(30)
-  status          OrderStatus    @default(PENDING_PAYMENT)
-  goodsAmount     Int            @db.UnsignedInt
-  discountAmount  Int            @default(0) @db.UnsignedInt
-  shippingAmount  Int            @default(0) @db.UnsignedInt
-  payableAmount   Int            @db.UnsignedInt
-  paidAmount      Int            @default(0) @db.UnsignedInt
-  refundedAmount  Int            @default(0) @db.UnsignedInt
-  buyerMessage    String?        @db.VarChar(255)
-  userCouponId    String?        @unique @db.VarChar(30)
-  couponCode      String?        @db.VarChar(50)
-  expiresAt       DateTime
-  paidAt          DateTime?
-  shippedAt       DateTime?
-  completedAt     DateTime?
-  cancelledAt     DateTime?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  user            User           @relation(fields: [userId], references: [id])
-  shop            Shop           @relation(fields: [shopId], references: [id])
-  platformOrder   PlatformOrder? @relation(fields: [platformOrderId], references: [id])
-  address         OrderAddress?
-  items           OrderItem[]
-  logs            OrderLog[]
-  payments        Payment[]
-  shipment        Shipment?
-  notes           OrderNote[]
-  userCoupon      UserCoupon?    @relation(fields: [userCouponId], references: [id])
-  afterSales      AfterSale[]
+  id                      String                   @id @default(cuid()) @db.VarChar(30)
+  orderNo                 String                   @unique @db.VarChar(32)
+  clientRequestId         String                   @db.VarChar(64)
+  userId                  String                   @db.VarChar(30)
+  shopId                  String                   @db.VarChar(30)
+  platformOrderId         String?                  @db.VarChar(30)
+  status                  OrderStatus              @default(PENDING_PAYMENT)
+  goodsAmount             Int                      @db.UnsignedInt
+  discountAmount          Int                      @default(0) @db.UnsignedInt
+  shippingAmount          Int                      @default(0) @db.UnsignedInt
+  payableAmount           Int                      @db.UnsignedInt
+  paidAmount              Int                      @default(0) @db.UnsignedInt
+  refundedAmount          Int                      @default(0) @db.UnsignedInt
+  buyerMessage            String?                  @db.VarChar(255)
+  userCouponId            String?                  @unique @db.VarChar(30)
+  couponCode              String?                  @db.VarChar(50)
+  expiresAt               DateTime
+  paidAt                  DateTime?
+  shippedAt               DateTime?
+  completedAt             DateTime?
+  cancelledAt             DateTime?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  user                    User                     @relation(fields: [userId], references: [id])
+  shop                    Shop                     @relation(fields: [shopId], references: [id])
+  platformOrder           PlatformOrder?           @relation(fields: [platformOrderId], references: [id])
+  address                 OrderAddress?
+  items                   OrderItem[]
+  logs                    OrderLog[]
+  payments                Payment[]
+  shipment                Shipment?
+  notes                   OrderNote[]
+  userCoupon              UserCoupon?              @relation(fields: [userCouponId], references: [id])
+  afterSales              AfterSale[]
+  merchantLedgerEntries   MerchantLedgerEntry[]
+  merchantSettlementOrder MerchantSettlementOrder?
 
   @@unique([userId, clientRequestId])
   @@index([userId, status, createdAt])
@@ -890,26 +917,129 @@ model AfterSaleLog {
 }
 
 model Refund {
-  id              String              @id @default(cuid()) @db.VarChar(30)
-  refundNo        String              @unique @db.VarChar(32)
-  afterSaleId     String              @unique @db.VarChar(30)
-  paymentId       String              @db.VarChar(30)
-  clientRequestId String              @unique @db.VarChar(64)
-  channel         String              @db.VarChar(30)
-  status          RefundStatus        @default(PENDING)
-  amount          Int                 @db.UnsignedInt
-  transactionId   String?             @unique @db.VarChar(100)
-  errorMessage    String?             @db.VarChar(500)
-  retryCount      Int                 @default(0) @db.UnsignedInt
-  lastAttemptAt   DateTime?
-  refundedAt      DateTime?
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  afterSale       AfterSale           @relation(fields: [afterSaleId], references: [id])
-  payment         Payment             @relation(fields: [paymentId], references: [id])
-  callbacks       RefundCallbackLog[]
+  id                    String                @id @default(cuid()) @db.VarChar(30)
+  refundNo              String                @unique @db.VarChar(32)
+  afterSaleId           String                @unique @db.VarChar(30)
+  paymentId             String                @db.VarChar(30)
+  clientRequestId       String                @unique @db.VarChar(64)
+  channel               String                @db.VarChar(30)
+  status                RefundStatus          @default(PENDING)
+  amount                Int                   @db.UnsignedInt
+  transactionId         String?               @unique @db.VarChar(100)
+  errorMessage          String?               @db.VarChar(500)
+  retryCount            Int                   @default(0) @db.UnsignedInt
+  lastAttemptAt         DateTime?
+  refundedAt            DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  afterSale             AfterSale             @relation(fields: [afterSaleId], references: [id])
+  payment               Payment               @relation(fields: [paymentId], references: [id])
+  callbacks             RefundCallbackLog[]
+  merchantLedgerEntries MerchantLedgerEntry[]
 
   @@index([paymentId, status])
+}
+
+model MerchantAccount {
+  merchantId      String   @id @db.VarChar(30)
+  pendingAmount   Int      @default(0)
+  availableAmount Int      @default(0)
+  frozenAmount    Int      @default(0)
+  withdrawnAmount Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  merchant        Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+}
+
+model MerchantLedgerEntry {
+  id                  String             @id @default(cuid()) @db.VarChar(30)
+  merchantId          String             @db.VarChar(30)
+  shopId              String?            @db.VarChar(30)
+  orderId             String?            @db.VarChar(30)
+  refundId            String?            @db.VarChar(30)
+  type                MerchantLedgerType
+  referenceId         String             @db.VarChar(30)
+  grossAmount         Int                @default(0)
+  commissionRateBps   Int                @default(0) @db.UnsignedSmallInt
+  commissionAmount    Int                @default(0)
+  netAmount           Int                @default(0)
+  pendingAmountDiff   Int                @default(0)
+  availableAmountDiff Int                @default(0)
+  frozenAmountDiff    Int                @default(0)
+  withdrawnAmountDiff Int                @default(0)
+  remark              String?            @db.VarChar(255)
+  createdAt           DateTime           @default(now())
+  merchant            Merchant           @relation(fields: [merchantId], references: [id])
+  shop                Shop?              @relation(fields: [shopId], references: [id])
+  order               Order?             @relation(fields: [orderId], references: [id])
+  refund              Refund?            @relation(fields: [refundId], references: [id])
+
+  @@unique([type, referenceId])
+  @@index([merchantId, createdAt])
+  @@index([shopId, createdAt])
+  @@index([orderId, createdAt])
+  @@index([refundId])
+}
+
+model MerchantSettlement {
+  id               String                    @id @default(cuid()) @db.VarChar(30)
+  settlementNo     String                    @unique @db.VarChar(32)
+  clientRequestId  String                    @db.VarChar(64)
+  merchantId       String                    @db.VarChar(30)
+  periodStart      DateTime
+  periodEnd        DateTime
+  grossAmount      Int                       @default(0)
+  refundAmount     Int                       @default(0)
+  commissionAmount Int                       @default(0)
+  netAmount        Int                       @default(0)
+  createdAt        DateTime                  @default(now())
+  merchant         Merchant                  @relation(fields: [merchantId], references: [id])
+  orders           MerchantSettlementOrder[]
+
+  @@unique([merchantId, clientRequestId])
+  @@index([merchantId, createdAt])
+  @@index([periodStart, periodEnd])
+}
+
+model MerchantSettlementOrder {
+  settlementId     String             @db.VarChar(30)
+  orderId          String             @unique @db.VarChar(30)
+  shopId           String             @db.VarChar(30)
+  grossAmount      Int
+  refundAmount     Int                @default(0)
+  commissionAmount Int
+  netAmount        Int
+  settlement       MerchantSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  order            Order              @relation(fields: [orderId], references: [id])
+  shop             Shop               @relation(fields: [shopId], references: [id])
+
+  @@id([settlementId, orderId])
+  @@index([shopId])
+}
+
+model MerchantWithdrawal {
+  id              String                   @id @default(cuid()) @db.VarChar(30)
+  withdrawalNo    String                   @unique @db.VarChar(32)
+  clientRequestId String                   @db.VarChar(64)
+  merchantId      String                   @db.VarChar(30)
+  requestedById   String                   @db.VarChar(30)
+  amount          Int                      @db.UnsignedInt
+  accountInfo     Json
+  status          MerchantWithdrawalStatus @default(PENDING)
+  reviewerId      String?                  @db.VarChar(30)
+  reviewRemark    String?                  @db.VarChar(500)
+  reviewedAt      DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  merchant        Merchant                 @relation(fields: [merchantId], references: [id])
+  requestedBy     User                     @relation("MerchantWithdrawalRequester", fields: [requestedById], references: [id])
+  reviewer        User?                    @relation("MerchantWithdrawalReviewer", fields: [reviewerId], references: [id])
+
+  @@unique([merchantId, clientRequestId])
+  @@index([merchantId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([reviewerId, reviewedAt])
 }
 
 model RefundCallbackLog {

@@ -20,6 +20,7 @@ import { purgeExpiredData } from '../../src/services/dataRetentionService.js'
 import { checkoutPreview } from '../../src/services/cartService.js'
 import { createOrder } from '../../src/services/orderService.js'
 import { mockPay } from '../../src/services/paymentService.js'
+import { createSettlement, createWithdrawal, reviewWithdrawal } from '../../src/services/merchantFinanceService.js'
 
 async function clearDatabase() {
 	const database = new URL(process.env.DATABASE_URL).pathname.slice(1)
@@ -379,6 +380,14 @@ describe.sequential('MySQL integration', () => {
 			paidOrderCount: 1,
 			salesAmount: paidOrder.paidAmount,
 		})
+		await request(app)
+			.get(`/api/v1/merchant/finance/account?shopId=${shop.id}`)
+			.set('authorization', `Bearer ${applicantToken}`)
+			.expect(200)
+		await request(app)
+			.get(`/api/v1/merchant/finance/account?shopId=${otherShop.id}`)
+			.set('authorization', `Bearer ${applicantToken}`)
+			.expect(403)
 		const otherDashboard = await request(app)
 			.get(`/api/v1/merchant/analytics/dashboard?shopId=${otherShop.id}`)
 			.set('authorization', `Bearer ${outsiderToken}`)
@@ -584,7 +593,7 @@ describe.sequential('MySQL integration', () => {
 	})
 
 	it('completes partial refunds without exceeding paid amount and restores stock proportionally', async () => {
-		const { userRole, adminRole } = await seedBase()
+		const { shop, userRole, adminRole } = await seedBase()
 		const [user, admin] = await Promise.all([
 			createUser(userRole, 'partial-refund-buyer'),
 			createUser(adminRole, 'partial-refund-admin'),
@@ -611,6 +620,10 @@ describe.sequential('MySQL integration', () => {
 		})
 		expect(await prisma.payment.findFirst({ where: { orderId: order.id } })).toMatchObject({ status: 'REFUNDED' })
 		expect(await prisma.inventory.findUnique({ where: { skuId: sku.id } })).toMatchObject({ available: 2, locked: 0 })
+		expect(await prisma.merchantAccount.findUnique({ where: { merchantId: shop.merchantId } })).toMatchObject({
+			pendingAmount: 0,
+		})
+		expect(await prisma.merchantLedgerEntry.count({ where: { orderId: order.id } })).toBe(3)
 	})
 
 	it('retries a failed channel refund without creating another refund record', async () => {
@@ -771,6 +784,65 @@ describe.sequential('MySQL integration', () => {
 			available: 2,
 			locked: 2,
 		})
+	})
+
+	it('records commission, settles completed orders, and processes a withdrawal exactly once', async () => {
+		const { shop, userRole, adminRole } = await seedBase()
+		const [buyer, admin] = await Promise.all([
+			createUser(userRole, 'finance-buyer'),
+			createUser(adminRole, 'finance-admin'),
+		])
+		const sku = await createActiveProduct(admin.id, 1, shop.id)
+		const order = await createPaidOrder(buyer, sku, 1, 'finance-order')
+		const paymentEntry = await prisma.merchantLedgerEntry.findFirst({ where: { orderId: order.id, type: 'PAYMENT' } })
+		expect(paymentEntry).toMatchObject({
+			grossAmount: 9900,
+			commissionRateBps: 500,
+			commissionAmount: 495,
+			netAmount: 9405,
+			pendingAmountDiff: 9405,
+		})
+		expect(await prisma.merchantAccount.findUnique({ where: { merchantId: shop.merchantId } })).toMatchObject({
+			pendingAmount: 9405,
+			availableAmount: 0,
+		})
+
+		const completedAt = new Date()
+		await prisma.order.update({ where: { id: order.id }, data: { status: 'COMPLETED', completedAt } })
+		const settlementInput = {
+			clientRequestId: 'finance-settlement-001',
+			periodStart: new Date(completedAt.getTime() - 60_000),
+			periodEnd: new Date(completedAt.getTime() + 60_000),
+		}
+		const firstSettlement = await createSettlement(shop.merchantId, shop.id, settlementInput)
+		const secondSettlement = await createSettlement(shop.merchantId, shop.id, settlementInput)
+		expect(firstSettlement.duplicated).toBe(false)
+		expect(secondSettlement.duplicated).toBe(true)
+		expect(firstSettlement.settlement).toMatchObject({
+			grossAmount: 9900,
+			refundAmount: 0,
+			commissionAmount: 495,
+			netAmount: 9405,
+		})
+
+		const withdrawalInput = {
+			clientRequestId: 'finance-withdrawal-001',
+			amount: 5000,
+			accountInfo: { bankName: '测试银行', accountName: '测试商户', accountNo: '6222000012345678' },
+		}
+		const firstWithdrawal = await createWithdrawal(shop.merchantId, admin.id, withdrawalInput)
+		const secondWithdrawal = await createWithdrawal(shop.merchantId, admin.id, withdrawalInput)
+		expect(firstWithdrawal.duplicated).toBe(false)
+		expect(secondWithdrawal.duplicated).toBe(true)
+		await reviewWithdrawal(firstWithdrawal.withdrawal.id, 'APPROVE', '审核通过', admin.id)
+		await reviewWithdrawal(firstWithdrawal.withdrawal.id, 'COMPLETE', '银行打款完成', admin.id)
+		expect(await prisma.merchantAccount.findUnique({ where: { merchantId: shop.merchantId } })).toMatchObject({
+			pendingAmount: 0,
+			availableAmount: 4405,
+			frozenAmount: 0,
+			withdrawnAmount: 5000,
+		})
+		expect(await prisma.merchantLedgerEntry.count({ where: { merchantId: shop.merchantId } })).toBe(4)
 	})
 
 	it('purges expired personal and operational data while retaining current records', async () => {
