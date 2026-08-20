@@ -17,3 +17,21 @@ export async function updateShop(req, res) {
 	const { id, ...input } = req.body
 	return res.success(await service.updateShop(req.user.id, id, input), '店铺已更新')
 }
+
+export async function listMembers(req, res) {
+	return res.success(await service.listMembers(req.user.id, req.query.shopId))
+}
+
+export async function addMember(req, res) {
+	const { shopId, ...input } = req.body
+	return res.success(await service.addMember(req.user.id, shopId, input), '商户成员已添加', 201)
+}
+
+export async function updateMember(req, res) {
+	const { shopId, userId, ...input } = req.body
+	return res.success(await service.updateMember(req.user.id, shopId, userId, input), '商户成员已更新')
+}
+
+export async function listAuditLogs(req, res) {
+	return res.success(await service.listMerchantAuditLogs(req.user.id, req.query.shopId, req.query))
+}

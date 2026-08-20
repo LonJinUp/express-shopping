@@ -46,3 +46,29 @@ export const shopUpdateSchema = z
 		logoUrl: optionalUrl,
 	})
 	.refine((value) => Object.keys(value).some((key) => key !== 'id'), { message: '至少需要修改一个字段' })
+
+export const merchantMemberListSchema = z.object({ shopId: id })
+
+export const merchantMemberAddSchema = z.object({
+	shopId: id,
+	identifier: z.string().trim().min(3).max(191),
+	role: z.enum(['ADMIN', 'STAFF']),
+})
+
+export const merchantMemberUpdateSchema = z
+	.object({
+		shopId: id,
+		userId: id,
+		role: z.enum(['ADMIN', 'STAFF']).optional(),
+		status: z.enum(['ACTIVE', 'DISABLED']).optional(),
+	})
+	.refine((value) => value.role !== undefined || value.status !== undefined, { message: '没有可更新的成员信息' })
+
+export const merchantAuditListSchema = z.object({
+	shopId: id,
+	page: z.coerce.number().int().min(1).default(1),
+	pageSize: z.coerce.number().int().min(1).max(100).default(20),
+	action: z.string().trim().max(100).optional(),
+	startDate: z.coerce.date().optional(),
+	endDate: z.coerce.date().optional(),
+})

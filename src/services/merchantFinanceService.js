@@ -104,6 +104,7 @@ export async function getAccount(merchantId) {
 export async function listLedger(merchantId, query) {
 	const where = {
 		merchantId,
+		shopId: query.shopId,
 		...(query.type ? { type: query.type } : {}),
 		...(query.startDate || query.endDate
 			? {
@@ -123,6 +124,62 @@ export async function listLedger(merchantId, query) {
 		items,
 		pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.ceil(total / query.pageSize) },
 	}
+}
+
+function csvCell(value) {
+	let text = value === null || value === undefined ? '' : String(value)
+	if (/^[=+\-@]/.test(text)) text = `'${text}`
+	return `"${text.replaceAll('"', '""')}"`
+}
+
+export async function exportLedger(merchantId, query) {
+	const endDate = query.endDate ?? new Date()
+	const startDate = query.startDate ?? new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000)
+	if (endDate <= startDate || endDate.getTime() - startDate.getTime() > 90 * 24 * 60 * 60 * 1000) {
+		throw new AppError('导出时间范围必须在 90 天内', { statusCode: 422, code: ERROR_CODES.VALIDATION_ERROR })
+	}
+	const entries = await prisma.merchantLedgerEntry.findMany({
+		where: { merchantId, shopId: query.shopId, createdAt: { gte: startDate, lte: endDate } },
+		orderBy: { createdAt: 'desc' },
+		take: 10_001,
+	})
+	if (entries.length > 10_000) {
+		throw new AppError('导出数据超过 10000 条，请缩小时间范围', {
+			statusCode: 422,
+			code: ERROR_CODES.VALIDATION_ERROR,
+		})
+	}
+	const headers = [
+		'流水类型',
+		'业务ID',
+		'订单ID',
+		'交易金额(分)',
+		'佣金比例(万分比)',
+		'佣金(分)',
+		'商户净额(分)',
+		'待结算变动(分)',
+		'可用变动(分)',
+		'冻结变动(分)',
+		'已提现变动(分)',
+		'备注',
+		'创建时间',
+	]
+	const rows = entries.map((entry) => [
+		entry.type,
+		entry.referenceId,
+		entry.orderId,
+		entry.grossAmount,
+		entry.commissionRateBps,
+		entry.commissionAmount,
+		entry.netAmount,
+		entry.pendingAmountDiff,
+		entry.availableAmountDiff,
+		entry.frozenAmountDiff,
+		entry.withdrawnAmountDiff,
+		entry.remark,
+		entry.createdAt.toISOString(),
+	])
+	return `\uFEFF${[headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n')}`
 }
 
 export async function createSettlement(merchantId, shopId, input) {

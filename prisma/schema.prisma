@@ -817,6 +817,8 @@ model BrowsingHistory {
 model AuditLog {
   id         String   @id @default(cuid()) @db.VarChar(30)
   operatorId String   @db.VarChar(30)
+  merchantId String?  @db.VarChar(30)
+  shopId     String?  @db.VarChar(30)
   method     String   @db.VarChar(10)
   path       String   @db.VarChar(255)
   action     String   @db.VarChar(100)
@@ -829,6 +831,8 @@ model AuditLog {
   createdAt  DateTime @default(now())
 
   @@index([operatorId, createdAt])
+  @@index([merchantId, createdAt])
+  @@index([shopId, createdAt])
   @@index([action, createdAt])
   @@index([createdAt])
 }

@@ -16,6 +16,14 @@ export async function listLedger(req, res) {
 	return res.success(await financeService.listLedger(merchantId, req.query))
 }
 
+export async function exportLedger(req, res) {
+	const merchantId = await merchantFor(req.user.id, req.query.shopId, ['OWNER', 'ADMIN'])
+	const csv = await financeService.exportLedger(merchantId, req.query)
+	res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+	res.setHeader('Content-Disposition', `attachment; filename="ledger-${Date.now()}.csv"`)
+	return res.status(200).send(csv)
+}
+
 export async function createSettlement(req, res) {
 	const merchantId = await merchantFor(req.user.id, req.body.shopId, ['OWNER', 'ADMIN'])
 	const { shopId, ...input } = req.body

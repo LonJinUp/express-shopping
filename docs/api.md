@@ -180,6 +180,10 @@
 | GET  | `/api/v1/merchant-applications/mine`         | 登录用户    | query    | 查询自己的入驻申请                           |
 | GET  | `/api/v1/merchant/shops`                     | 商户成员    | query    | 查询有权访问的商户与店铺                     |
 | POST | `/api/v1/merchant/shops/update`              | OWNER/ADMIN | body     | 修改所属店铺资料                             |
+| GET  | `/api/v1/merchant/members`                   | 商户成员    | query    | 商户成员列表                                 |
+| POST | `/api/v1/merchant/members/add`               | OWNER/ADMIN | body     | 按邮箱或手机号添加成员                       |
+| POST | `/api/v1/merchant/members/update`            | OWNER/ADMIN | body     | 调整角色或停用成员                           |
+| GET  | `/api/v1/merchant/audit-logs`                | 商户成员    | query    | 商户写操作审计日志                           |
 | GET  | `/api/v1/admin/merchant-applications`        | ADMIN       | query    | 分页查询入驻申请                             |
 | POST | `/api/v1/admin/merchant-applications/review` | ADMIN       | body     | 通过或驳回入驻申请                           |
 
@@ -224,6 +228,7 @@
 | ---- | --------------------------------------------- | ----------- | ------------------------------ |
 | GET  | `/api/v1/merchant/finance/account`            | 商户成员    | 待结算、可用、冻结和已提现余额 |
 | GET  | `/api/v1/merchant/finance/ledger`             | 商户成员    | 支付、退款、结算和提现流水     |
+| GET  | `/api/v1/merchant/finance/ledger/export`      | OWNER/ADMIN | 导出当前店铺资金流水 CSV       |
 | POST | `/api/v1/merchant/finance/settlements/create` | OWNER/ADMIN | 按订单完成周期生成结算单       |
 | GET  | `/api/v1/merchant/finance/settlements`        | 商户成员    | 结算单及订单明细               |
 | POST | `/api/v1/merchant/finance/withdrawals/create` | OWNER/ADMIN | 从可用余额申请提现             |
@@ -233,3 +238,5 @@
 | POST | `/api/v1/admin/shops/commission/update`       | ADMIN       | 设置店铺佣金万分比             |
 
 金额统一使用“分”，`commissionRateBps` 使用万分比，例如 `500` 表示 5%。支付成功后商户净收入进入待结算余额；只有已完成订单可以生成结算单并转入可用余额。提现申请会冻结可用余额，平台驳回时原路恢复，完成打款后计入累计提现。
+
+成员权限规则：OWNER 可以管理 ADMIN 和 STAFF；ADMIN 只能添加、调整或停用 STAFF；OWNER 不能通过普通成员接口被修改。商户写接口会异步记录操作者、店铺、请求参数、结果状态和请求 ID，银行卡号等敏感字段在审计载荷中会被脱敏。

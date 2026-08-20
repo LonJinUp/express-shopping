@@ -133,6 +133,24 @@ const paths = {
 	'/api/v1/merchant/shops/update': {
 		post: operation('修改店铺资料', '商户管理', { auth: true, body: schema('ShopUpdateInput') }),
 	},
+	'/api/v1/merchant/members': {
+		get: operation('商户成员列表', '商户管理', {
+			auth: true,
+			parameters: [queryParameter('shopId', id, '店铺 ID')],
+		}),
+	},
+	'/api/v1/merchant/members/add': {
+		post: operation('添加商户成员', '商户管理', { auth: true, body: schema('MerchantMemberAddInput') }),
+	},
+	'/api/v1/merchant/members/update': {
+		post: operation('更新商户成员', '商户管理', { auth: true, body: schema('MerchantMemberUpdateInput') }),
+	},
+	'/api/v1/merchant/audit-logs': {
+		get: operation('商户操作审计日志', '商户管理', {
+			auth: true,
+			parameters: [queryParameter('shopId', id, '店铺 ID'), ...pagination],
+		}),
+	},
 	'/api/v1/merchant/products': {
 		get: operation('商户商品列表', '商户商品管理', {
 			auth: true,
@@ -292,6 +310,17 @@ const paths = {
 		get: operation('商户资金流水', '商户财务', {
 			auth: true,
 			parameters: [queryParameter('shopId', id, '店铺 ID'), ...pagination],
+		}),
+	},
+	'/api/v1/merchant/finance/ledger/export': {
+		get: operation('导出店铺资金流水 CSV', '商户财务', {
+			auth: true,
+			parameters: [
+				queryParameter('shopId', id, '店铺 ID'),
+				queryParameter('startDate', dateTime, '开始时间'),
+				queryParameter('endDate', dateTime, '结束时间'),
+			],
+			responses: { 200: { description: 'UTF-8 BOM CSV', content: { 'text/csv': { schema: { type: 'string' } } } } },
 		}),
 	},
 	'/api/v1/merchant/finance/settlements/create': {
@@ -828,6 +857,25 @@ export const openapiDocument = {
 					name: { type: 'string', minLength: 2, maxLength: 120 },
 					description: { type: ['string', 'null'], maxLength: 500 },
 					logoUrl: { type: ['string', 'null'], format: 'uri', maxLength: 500 },
+				},
+			},
+			MerchantMemberAddInput: {
+				type: 'object',
+				required: ['shopId', 'identifier', 'role'],
+				properties: {
+					shopId: id,
+					identifier: { type: 'string', minLength: 3, maxLength: 191, description: '用户邮箱或手机号' },
+					role: { type: 'string', enum: ['ADMIN', 'STAFF'] },
+				},
+			},
+			MerchantMemberUpdateInput: {
+				type: 'object',
+				required: ['shopId', 'userId'],
+				properties: {
+					shopId: id,
+					userId: id,
+					role: { type: 'string', enum: ['ADMIN', 'STAFF'] },
+					status: { type: 'string', enum: ['ACTIVE', 'DISABLED'] },
 				},
 			},
 			SuccessResponse: {

@@ -13,6 +13,7 @@ import { afterSaleRouter, refundCallbackRouter } from './afterSaleRoutes.js'
 import { merchantRouter } from './merchantRoutes.js'
 import { merchantCommerceRouter } from './merchantCommerceRoutes.js'
 import { merchantFinanceRouter } from './merchantFinanceRoutes.js'
+import { auditMerchantAction } from '../middlewares/audit.js'
 
 export const apiRouter = Router()
 
@@ -33,6 +34,7 @@ apiRouter.use(operationsRouter)
 apiRouter.use(userRouter)
 apiRouter.use(afterSaleRouter)
 apiRouter.use(merchantRouter)
+apiRouter.use('/merchant', auditMerchantAction)
 apiRouter.use('/merchant', merchantCommerceRouter)
 apiRouter.use('/merchant', merchantFinanceRouter)
 apiRouter.use('/admin', adminRouter)

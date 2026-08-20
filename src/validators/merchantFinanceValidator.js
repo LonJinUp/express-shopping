@@ -19,6 +19,12 @@ export const ledgerListSchema = z.object({
 	endDate: z.coerce.date().optional(),
 })
 
+export const ledgerExportSchema = z.object({
+	shopId: id,
+	startDate: z.coerce.date().optional(),
+	endDate: z.coerce.date().optional(),
+})
+
 export const settlementCreateSchema = z
 	.object({
 		shopId: id,

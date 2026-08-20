@@ -175,3 +175,101 @@ export async function assertShopAccess(userId, shopId, allowedRoles = ['OWNER', 
 	if (!shop) throw new AppError('店铺不存在或没有管理权限', { statusCode: 403, code: ERROR_CODES.FORBIDDEN })
 	return shop
 }
+
+async function getMerchantActor(userId, merchantId) {
+	const member = await prisma.merchantMember.findFirst({
+		where: { userId, merchantId, status: 'ACTIVE', merchant: { status: 'ACTIVE' } },
+	})
+	if (!member) throw new AppError('没有商户管理权限', { statusCode: 403, code: ERROR_CODES.FORBIDDEN })
+	return member
+}
+
+export async function listMembers(userId, shopId) {
+	const shop = await assertShopAccess(userId, shopId)
+	return prisma.merchantMember.findMany({
+		where: { merchantId: shop.merchantId },
+		include: { user: { select: { id: true, nickname: true, email: true, phone: true, status: true } } },
+		orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
+	})
+}
+
+export async function addMember(userId, shopId, input) {
+	const shop = await assertShopAccess(userId, shopId, ['OWNER', 'ADMIN'])
+	const actor = await getMerchantActor(userId, shop.merchantId)
+	if (actor.role === 'ADMIN' && input.role !== 'STAFF') {
+		throw new AppError('ADMIN 只能添加 STAFF', { statusCode: 403, code: ERROR_CODES.FORBIDDEN })
+	}
+	return prisma.$transaction(async (tx) => {
+		const target = await tx.user.findFirst({
+			where: { OR: [{ email: input.identifier }, { phone: input.identifier }], status: 'ACTIVE' },
+			select: { id: true },
+		})
+		if (!target) throw new AppError('目标用户不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
+		const otherMembership = await tx.merchantMember.findFirst({
+			where: { userId: target.id, merchantId: { not: shop.merchantId }, status: 'ACTIVE' },
+		})
+		if (otherMembership) throw conflict('目标用户已加入其他商户')
+		const existing = await tx.merchantMember.findUnique({
+			where: { merchantId_userId: { merchantId: shop.merchantId, userId: target.id } },
+		})
+		if (existing?.role === 'OWNER') throw conflict('不能修改商户 OWNER')
+		const membership = await tx.merchantMember.upsert({
+			where: { merchantId_userId: { merchantId: shop.merchantId, userId: target.id } },
+			update: { role: input.role, status: 'ACTIVE' },
+			create: { merchantId: shop.merchantId, userId: target.id, role: input.role },
+		})
+		const role = await tx.role.upsert({
+			where: { code: 'MERCHANT' },
+			update: { name: '商户成员' },
+			create: { code: 'MERCHANT', name: '商户成员' },
+		})
+		await tx.userRole.upsert({
+			where: { userId_roleId: { userId: target.id, roleId: role.id } },
+			update: {},
+			create: { userId: target.id, roleId: role.id },
+		})
+		return membership
+	})
+}
+
+export async function updateMember(userId, shopId, targetUserId, input) {
+	const shop = await assertShopAccess(userId, shopId, ['OWNER', 'ADMIN'])
+	const actor = await getMerchantActor(userId, shop.merchantId)
+	const target = await prisma.merchantMember.findUnique({
+		where: { merchantId_userId: { merchantId: shop.merchantId, userId: targetUserId } },
+	})
+	if (!target) throw new AppError('商户成员不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
+	if (target.role === 'OWNER') throw conflict('不能修改商户 OWNER')
+	if (actor.role === 'ADMIN' && (target.role !== 'STAFF' || (input.role && input.role !== 'STAFF'))) {
+		throw new AppError('ADMIN 只能管理 STAFF', { statusCode: 403, code: ERROR_CODES.FORBIDDEN })
+	}
+	return prisma.merchantMember.update({
+		where: { merchantId_userId: { merchantId: shop.merchantId, userId: targetUserId } },
+		data: input,
+	})
+}
+
+export async function listMerchantAuditLogs(userId, shopId, query) {
+	const shop = await assertShopAccess(userId, shopId)
+	const where = {
+		merchantId: shop.merchantId,
+		...(query.action ? { action: { contains: query.action } } : {}),
+		...(query.startDate || query.endDate
+			? {
+					createdAt: {
+						...(query.startDate ? { gte: query.startDate } : {}),
+						...(query.endDate ? { lte: query.endDate } : {}),
+					},
+				}
+			: {}),
+	}
+	const skip = (query.page - 1) * query.pageSize
+	const [total, items] = await prisma.$transaction([
+		prisma.auditLog.count({ where }),
+		prisma.auditLog.findMany({ where, skip, take: query.pageSize, orderBy: { createdAt: 'desc' } }),
+	])
+	return {
+		items,
+		pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.ceil(total / query.pageSize) },
+	}
+}

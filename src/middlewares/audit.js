@@ -1,7 +1,7 @@
 import { prisma } from '../config/prisma.js'
 import { logger } from '../config/logger.js'
 
-const sensitiveKeys = new Set(['password', 'refreshToken', 'token', 'secret'])
+const sensitiveKeys = new Set(['password', 'refreshToken', 'token', 'secret', 'accountNo'])
 
 function sanitize(value) {
 	if (Array.isArray(value)) return value.map(sanitize)
@@ -31,6 +31,39 @@ export function auditAdminAction(req, res, next) {
 				},
 			})
 			.catch((error) => logger.error({ err: error, requestId: req.id }, '管理操作审计写入失败'))
+	})
+	return next()
+}
+
+export function auditMerchantAction(req, res, next) {
+	if (req.method !== 'POST') return next()
+	res.on('finish', () => {
+		if (!req.user) return
+		const shopId = req.body?.shopId ?? (req.originalUrl.includes('/merchant/shops/update') ? req.body?.id : undefined)
+		const merchantId = req.body?.merchantId
+		const scope = shopId
+			? prisma.shop.findUnique({ where: { id: shopId }, select: { merchantId: true } })
+			: Promise.resolve(merchantId ? { merchantId } : null)
+		scope
+			.then((shop) =>
+				prisma.auditLog.create({
+					data: {
+						operatorId: req.user.id,
+						merchantId: shop?.merchantId,
+						shopId,
+						method: req.method,
+						path: req.originalUrl.slice(0, 255),
+						action: req.route?.path?.toString().slice(0, 100) ?? 'MERCHANT_WRITE',
+						targetId: req.body?.id ?? req.body?.userId ?? req.body?.productId,
+						requestId: req.id,
+						ip: req.ip?.replace(/^::ffff:/, '').slice(0, 80),
+						userAgent: req.get('user-agent')?.slice(0, 500),
+						statusCode: res.statusCode,
+						payload: sanitize(req.body),
+					},
+				})
+			)
+			.catch((error) => logger.error({ err: error, requestId: req.id }, '商户操作审计写入失败'))
 	})
 	return next()
 }

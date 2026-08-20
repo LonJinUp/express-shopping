@@ -20,7 +20,12 @@ import { purgeExpiredData } from '../../src/services/dataRetentionService.js'
 import { checkoutPreview } from '../../src/services/cartService.js'
 import { createOrder } from '../../src/services/orderService.js'
 import { mockPay } from '../../src/services/paymentService.js'
-import { createSettlement, createWithdrawal, reviewWithdrawal } from '../../src/services/merchantFinanceService.js'
+import {
+	createSettlement,
+	createWithdrawal,
+	exportLedger,
+	reviewWithdrawal,
+} from '../../src/services/merchantFinanceService.js'
 
 async function clearDatabase() {
 	const database = new URL(process.env.DATABASE_URL).pathname.slice(1)
@@ -183,20 +188,26 @@ describe.sequential('MySQL integration', () => {
 
 	it('onboards a merchant and isolates shop management permissions', async () => {
 		const { userRole, adminRole } = await seedBase()
-		const [applicant, outsider] = await Promise.all([
+		const [applicant, outsider, manager, staff] = await Promise.all([
 			createUser(userRole, 'merchant-applicant'),
 			createUser(userRole, 'merchant-outsider'),
+			createUser(userRole, 'merchant-manager'),
+			createUser(userRole, 'merchant-staff'),
 		])
 		const admin = await createUser(adminRole, 'merchant-reviewer')
 		const login = async (email) =>
 			request(app).post('/api/v1/auth/login').send({ identifier: email, password: 'password123' }).expect(200)
-		const [applicantLogin, outsiderLogin, adminLogin] = await Promise.all([
+		const [applicantLogin, outsiderLogin, managerLogin, staffLogin, adminLogin] = await Promise.all([
 			login(applicant.email),
 			login(outsider.email),
+			login(manager.email),
+			login(staff.email),
 			login(admin.email),
 		])
 		const applicantToken = applicantLogin.body.data.accessToken
 		const outsiderToken = outsiderLogin.body.data.accessToken
+		const managerToken = managerLogin.body.data.accessToken
+		const staffToken = staffLogin.body.data.accessToken
 		const adminToken = adminLogin.body.data.accessToken
 		const input = {
 			clientRequestId: 'merchant-application-001',
@@ -254,6 +265,36 @@ describe.sequential('MySQL integration', () => {
 		expect(shops.body.data[0]).toMatchObject({ role: 'OWNER', merchant: { code: 'INTEGRATION_MERCHANT' } })
 
 		await request(app)
+			.post('/api/v1/merchant/members/add')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send({ shopId: shop.id, identifier: manager.email, role: 'ADMIN' })
+			.expect(201)
+		await request(app)
+			.post('/api/v1/merchant/members/add')
+			.set('authorization', `Bearer ${managerToken}`)
+			.send({ shopId: shop.id, identifier: staff.email, role: 'STAFF' })
+			.expect(201)
+		await request(app)
+			.post('/api/v1/merchant/members/update')
+			.set('authorization', `Bearer ${managerToken}`)
+			.send({ shopId: shop.id, userId: manager.id, status: 'DISABLED' })
+			.expect(403)
+		const memberList = await request(app)
+			.get(`/api/v1/merchant/members?shopId=${shop.id}`)
+			.set('authorization', `Bearer ${staffToken}`)
+			.expect(200)
+		expect(memberList.body.data).toHaveLength(3)
+		await request(app)
+			.post('/api/v1/merchant/members/update')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send({ shopId: shop.id, userId: staff.id, status: 'DISABLED' })
+			.expect(200)
+		await request(app)
+			.get(`/api/v1/merchant/members?shopId=${shop.id}`)
+			.set('authorization', `Bearer ${staffToken}`)
+			.expect(403)
+
+		await request(app)
 			.post('/api/v1/merchant/shops/update')
 			.set('authorization', `Bearer ${applicantToken}`)
 			.send({ id: shop.id, name: '更新后的店铺' })
@@ -263,6 +304,13 @@ describe.sequential('MySQL integration', () => {
 			.set('authorization', `Bearer ${outsiderToken}`)
 			.send({ id: shop.id, name: '越权修改' })
 			.expect(403)
+		await new Promise((resolve) => setTimeout(resolve, 50))
+		const auditLogs = await request(app)
+			.get(`/api/v1/merchant/audit-logs?shopId=${shop.id}`)
+			.set('authorization', `Bearer ${applicantToken}`)
+			.expect(200)
+		expect(auditLogs.body.data.pagination.total).toBeGreaterThanOrEqual(4)
+		expect(auditLogs.body.data.items.every((item) => item.merchantId === shop.merchantId)).toBe(true)
 
 		const otherMerchant = await prisma.merchant.create({
 			data: {
@@ -802,6 +850,13 @@ describe.sequential('MySQL integration', () => {
 			netAmount: 9405,
 			pendingAmountDiff: 9405,
 		})
+		const ledgerCsv = await exportLedger(shop.merchantId, {
+			shopId: shop.id,
+			startDate: new Date(Date.now() - 60_000),
+			endDate: new Date(Date.now() + 60_000),
+		})
+		expect(ledgerCsv).toContain('PAYMENT')
+		expect(ledgerCsv).toContain(order.id)
 		expect(await prisma.merchantAccount.findUnique({ where: { merchantId: shop.merchantId } })).toMatchObject({
 			pendingAmount: 9405,
 			availableAmount: 0,

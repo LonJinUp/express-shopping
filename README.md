@@ -67,6 +67,7 @@ PENDING_PAYMENT -> PAID -> PROCESSING -> SHIPPED -> COMPLETED
 
 - 商户和店铺入驻、审核及状态管理
 - 商户后台及数据隔离
+- OWNER/ADMIN/STAFF 成员权限、操作审计和数据导出
 - 跨店购物车结算、平台订单拆单和分店履约
 - 平台佣金、不可变商户账本、周期结算及提现审核
 - 店铺优惠、平台优惠及分摊规则
