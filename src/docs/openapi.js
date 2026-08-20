@@ -121,6 +121,24 @@ const paths = {
 	'/api/v1/addresses/delete': {
 		post: operation('删除收货地址', '用户', { auth: true, body: schema('IdInput') }),
 	},
+	'/api/v1/notifications': {
+		get: operation('站内通知列表', '用户', {
+			auth: true,
+			parameters: [
+				...pagination,
+				queryParameter('unreadOnly', { type: 'boolean', default: false }, '是否只查询未读通知'),
+			],
+		}),
+	},
+	'/api/v1/notifications/unread-count': {
+		get: operation('未读通知数量', '用户', { auth: true }),
+	},
+	'/api/v1/notifications/read': {
+		post: operation('标记一条通知为已读', '用户', { auth: true, body: schema('IdInput') }),
+	},
+	'/api/v1/notifications/read-all': {
+		post: operation('全部通知标记为已读', '用户', { auth: true }),
+	},
 	'/api/v1/merchant-applications/create': {
 		post: operation('提交商户入驻申请', '商户入驻', { auth: true, body: schema('MerchantApplicationInput') }),
 	},

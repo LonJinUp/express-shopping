@@ -21,6 +21,7 @@ import { purgeExpiredData } from '../../src/services/dataRetentionService.js'
 import { checkoutPreview } from '../../src/services/cartService.js'
 import { createOrder } from '../../src/services/orderService.js'
 import { mockPay } from '../../src/services/paymentService.js'
+import { processNotificationOutbox } from '../../src/services/notificationService.js'
 import {
 	createSettlement,
 	createWithdrawal,
@@ -616,6 +617,90 @@ describe.sequential('MySQL integration', () => {
 			status: 'PAID',
 			paidAmount: payment.amount,
 		})
+	})
+
+	it('delivers idempotent in-app notifications and isolates each user inbox', async () => {
+		const { userRole } = await seedBase()
+		const [buyer, outsider] = await Promise.all([
+			createUser(userRole, 'notification-buyer'),
+			createUser(userRole, 'notification-outsider'),
+		])
+		const sku = await createActiveProduct(buyer.id, 1)
+		const order = await createPaidOrder(buyer, sku, 1, 'notification-order')
+
+		expect(await prisma.notificationOutbox.count()).toBe(1)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 0, failedCount: 0 })
+		const notification = await prisma.userNotification.findFirst({ where: { userId: buyer.id } })
+		expect(notification).toMatchObject({
+			eventKey: `ORDER_PAID:${order.id}`,
+			type: 'ORDER_PAID',
+			referenceId: order.id,
+			readAt: null,
+		})
+		expect(await prisma.userNotification.count()).toBe(1)
+		expect(await prisma.notificationOutbox.findFirst()).toMatchObject({ status: 'SENT', attempts: 1 })
+
+		const login = async (user) => {
+			const response = await request(app)
+				.post('/api/v1/auth/login')
+				.send({ identifier: user.email, password: 'password123' })
+				.expect(200)
+			return response.body.data.accessToken
+		}
+		const [buyerToken, outsiderToken] = await Promise.all([login(buyer), login(outsider)])
+		const inbox = await request(app)
+			.get('/api/v1/notifications?unreadOnly=true')
+			.set('authorization', `Bearer ${buyerToken}`)
+			.expect(200)
+		expect(inbox.body.data.pagination.total).toBe(1)
+		expect(inbox.body.data.items[0].id).toBe(notification.id)
+
+		await request(app)
+			.post('/api/v1/notifications/read')
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.send({ id: notification.id })
+			.expect(200)
+		expect((await prisma.userNotification.findUnique({ where: { id: notification.id } })).readAt).toBeNull()
+
+		await request(app)
+			.post('/api/v1/notifications/read')
+			.set('authorization', `Bearer ${buyerToken}`)
+			.send({ id: notification.id })
+			.expect(200)
+		const unread = await request(app)
+			.get('/api/v1/notifications/unread-count')
+			.set('authorization', `Bearer ${buyerToken}`)
+			.expect(200)
+		expect(unread.body.data.count).toBe(0)
+	})
+
+	it('retries failed notification delivery until the attempt limit is exhausted', async () => {
+		const { userRole } = await seedBase()
+		const user = await createUser(userRole, 'notification-retry')
+		const outbox = await prisma.notificationOutbox.create({
+			data: {
+				channel: 'UNAVAILABLE_CHANNEL',
+				eventKey: 'RETRY_TEST:event-001',
+				userId: user.id,
+				type: 'RETRY_TEST',
+				payload: { title: '重试测试', content: '渠道当前不可用' },
+				maxAttempts: 2,
+			},
+		})
+
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 0, failedCount: 1 })
+		expect(await prisma.notificationOutbox.findUnique({ where: { id: outbox.id } })).toMatchObject({
+			status: 'FAILED',
+			attempts: 1,
+		})
+		await prisma.notificationOutbox.update({ where: { id: outbox.id }, data: { nextAttemptAt: new Date(0) } })
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 0, failedCount: 1 })
+		expect(await prisma.notificationOutbox.findUnique({ where: { id: outbox.id } })).toMatchObject({
+			status: 'EXHAUSTED',
+			attempts: 2,
+		})
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 0, failedCount: 0 })
 	})
 
 	it('handles concurrent delivery of the same payment callback', async () => {

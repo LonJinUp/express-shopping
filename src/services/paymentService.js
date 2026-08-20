@@ -7,6 +7,7 @@ import { env } from '../config/env.js'
 import { logger } from '../config/logger.js'
 import { getPaymentChannel, normalizePaymentQueryResult } from './paymentChannelService.js'
 import { recordPaymentRevenue } from './merchantFinanceService.js'
+import { enqueueNotification } from './notificationService.js'
 
 function nextPaymentQueryAt(now = new Date()) {
 	return new Date(now.getTime() + env.PAYMENT_QUERY_INTERVAL_SECONDS * 1000)
@@ -125,6 +126,15 @@ export async function mockPay(userId, input) {
 					},
 				})
 				await recordPaymentRevenue(tx, created.id)
+				await enqueueNotification(tx, {
+					eventKey: `ORDER_PAID:${order.id}`,
+					userId: order.userId,
+					type: 'ORDER_PAID',
+					title: '订单支付成功',
+					content: `订单 ${order.orderNo} 已支付成功，商家将尽快处理。`,
+					referenceType: 'ORDER',
+					referenceId: order.id,
+				})
 				return created
 			},
 			{ isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
@@ -184,6 +194,15 @@ async function applySuccessfulPayment(tx, payment, transactionId, remark) {
 	await recordPaymentRevenue(tx, payment.id)
 	await tx.orderLog.create({
 		data: { orderId: order.id, fromStatus: 'PENDING_PAYMENT', toStatus: 'PAID', action: 'PAY_CALLBACK', remark },
+	})
+	await enqueueNotification(tx, {
+		eventKey: `ORDER_PAID:${order.id}`,
+		userId: order.userId,
+		type: 'ORDER_PAID',
+		title: '订单支付成功',
+		content: `订单 ${order.orderNo} 已支付成功，商家将尽快处理。`,
+		referenceType: 'ORDER',
+		referenceId: order.id,
 	})
 }
 

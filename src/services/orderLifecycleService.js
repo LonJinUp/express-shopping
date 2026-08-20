@@ -3,6 +3,7 @@ import { prisma } from '../config/prisma.js'
 import { env } from '../config/env.js'
 import { ERROR_CODES } from '../constants/errorCodes.js'
 import { AppError } from '../errors/AppError.js'
+import { enqueueNotification } from './notificationService.js'
 
 export async function closeExpiredOrder(orderId) {
 	return prisma.$transaction(
@@ -88,6 +89,11 @@ export async function acceptOrder(orderId, operatorId, shopId) {
 
 export async function shipOrder(orderId, input, operatorId, shopId) {
 	return prisma.$transaction(async (tx) => {
+		const order = await tx.order.findFirst({
+			where: { id: orderId, status: 'PROCESSING', ...(shopId ? { shopId } : {}) },
+			select: { id: true, userId: true, orderNo: true },
+		})
+		if (!order) throw new AppError('订单不存在或当前状态不能发货', { statusCode: 409, code: ERROR_CODES.CONFLICT })
 		const changed = await tx.order.updateMany({
 			where: { id: orderId, status: 'PROCESSING', ...(shopId ? { shopId } : {}) },
 			data: { status: 'SHIPPED', shippedAt: new Date() },
@@ -104,6 +110,15 @@ export async function shipOrder(orderId, input, operatorId, shopId) {
 				operatorId,
 				remark: `已发货：${input.carrierName} ${input.trackingNumber}`,
 			},
+		})
+		await enqueueNotification(tx, {
+			eventKey: `ORDER_SHIPPED:${orderId}`,
+			userId: order.userId,
+			type: 'ORDER_SHIPPED',
+			title: '订单已发货',
+			content: `订单 ${order.orderNo} 已由 ${input.carrierName} 发出，运单号 ${input.trackingNumber}。`,
+			referenceType: 'ORDER',
+			referenceId: orderId,
 		})
 		return tx.order.findUnique({ where: { id: orderId }, include: { shipment: true } })
 	})

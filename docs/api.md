@@ -26,6 +26,17 @@
 | POST | `/api/v1/addresses/update` | 登录 | 修改地址，body 传 `id` |
 | POST | `/api/v1/addresses/delete` | 登录 | 删除地址，body 传 `id` |
 
+## 站内通知
+
+| 方法 | 路径                                 | 权限 | 说明                                   |
+| ---- | ------------------------------------ | ---- | -------------------------------------- |
+| GET  | `/api/v1/notifications`              | 登录 | 通知列表，支持分页和 `unreadOnly` 筛选 |
+| GET  | `/api/v1/notifications/unread-count` | 登录 | 未读通知数量                           |
+| POST | `/api/v1/notifications/read`         | 登录 | 标记一条通知已读，body 传 `id`         |
+| POST | `/api/v1/notifications/read-all`     | 登录 | 将当前用户的全部通知标记为已读         |
+
+支付成功、订单发货、退款成功和平台仲裁完成会在原业务事务内写入通知发件箱。定时任务异步投递站内通知，使用事件键防重并对失败任务进行指数退避重试。
+
 ## 商城目录
 
 | 方法 | 路径                      | 权限 | 说明                                |

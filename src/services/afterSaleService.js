@@ -6,6 +6,7 @@ import { createAfterSaleNo, createRefundNo } from '../utils/transactionNo.js'
 import { buildAfterSaleOverdueWhere } from './afterSaleReminderService.js'
 import { calculateAfterSaleAmount } from './refundCalculationService.js'
 import { recordRefundReversal } from './merchantFinanceService.js'
+import { enqueueNotification } from './notificationService.js'
 
 const activeStatuses = ['PENDING', 'ARBITRATING', 'APPROVED', 'WAITING_RETURN', 'RETURNED', 'REFUNDING']
 const applicableOrderStatuses = ['PAID', 'PROCESSING', 'SHIPPED', 'COMPLETED']
@@ -429,6 +430,18 @@ export async function resolveArbitration(id, input, operatorId) {
 					remark: input.remark,
 				},
 			})
+			await enqueueNotification(tx, {
+				eventKey: `ARBITRATION_RESOLVED:${arbitration.id}`,
+				userId: afterSale.userId,
+				type: 'ARBITRATION_RESOLVED',
+				title: '售后仲裁已完成',
+				content:
+					input.decision === 'APPROVE'
+						? `您的售后仲裁已通过，核准退款 ${approvedAmount} 分。`
+						: '您的售后仲裁未通过，请查看售后详情。',
+				referenceType: 'AFTER_SALE',
+				referenceId: afterSale.id,
+			})
 			return tx.afterSale.findUnique({ where: { id: afterSale.id }, include: detailInclude })
 		},
 		{ isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
@@ -646,6 +659,15 @@ async function completeRefund(tx, refund, afterSale, operatorId, transactionId, 
 			operatorId,
 			remark: `退款成功：${refund.amount} 分`,
 		},
+	})
+	await enqueueNotification(tx, {
+		eventKey: `REFUND_SUCCEEDED:${refund.id}`,
+		userId: afterSale.userId,
+		type: 'REFUND_SUCCEEDED',
+		title: '退款已到账',
+		content: `订单 ${afterSale.order.orderNo} 已成功退款 ${refund.amount} 分。`,
+		referenceType: 'AFTER_SALE',
+		referenceId: afterSale.id,
 	})
 	if (isFullRefund) await restoreCoupon(tx, afterSale.order)
 }
