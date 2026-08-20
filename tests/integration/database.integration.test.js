@@ -6,6 +6,7 @@ import { env } from '../../src/config/env.js'
 import { prisma } from '../../src/config/prisma.js'
 import { createCallbackSignature } from '../../src/middlewares/paymentCallback.js'
 import { adjustInventory, createProduct } from '../../src/services/adminCatalogService.js'
+import { platformOverview } from '../../src/services/analyticsService.js'
 import {
 	createAfterSale,
 	createRefund,
@@ -428,6 +429,12 @@ describe.sequential('MySQL integration', () => {
 			paidOrderCount: 1,
 			salesAmount: paidOrder.paidAmount,
 		})
+		expect(merchantDashboard.body.data.finance).toMatchObject({
+			paymentGross: paidOrder.paidAmount,
+			refundAmount: 0,
+			commissionAmount: Math.floor((paidOrder.paidAmount * 500) / 10_000),
+			merchantNet: paidOrder.paidAmount - Math.floor((paidOrder.paidAmount * 500) / 10_000),
+		})
 		await request(app)
 			.get(`/api/v1/merchant/finance/account?shopId=${shop.id}`)
 			.set('authorization', `Bearer ${applicantToken}`)
@@ -849,6 +856,24 @@ describe.sequential('MySQL integration', () => {
 			commissionAmount: 495,
 			netAmount: 9405,
 			pendingAmountDiff: 9405,
+		})
+		const overview = await platformOverview({
+			startDate: new Date(Date.now() - 60_000),
+			endDate: new Date(Date.now() + 60_000),
+			limit: 10,
+		})
+		expect(overview.transactions).toMatchObject({
+			paymentCount: 1,
+			paymentAmount: 9900,
+			refundAmount: 0,
+			commissionAmount: 495,
+			merchantNetAmount: 9405,
+		})
+		expect(overview.merchantLiabilities).toMatchObject({ pendingAmount: 9405, availableAmount: 0 })
+		expect(overview.merchantRanking[0]).toMatchObject({
+			merchant: { id: shop.merchantId },
+			commissionAmount: 495,
+			netAmount: 9405,
 		})
 		const ledgerCsv = await exportLedger(shop.merchantId, {
 			shopId: shop.id,

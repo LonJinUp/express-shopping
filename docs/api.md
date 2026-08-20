@@ -139,14 +139,15 @@
 
 以下接口均需要 `ADMIN` 角色。
 
-| 方法 | 路径                                | 说明                       |
-| ---- | ----------------------------------- | -------------------------- |
-| GET  | `/api/v1/admin/home-blocks`         | 首页配置列表               |
-| POST | `/api/v1/admin/home-blocks/create`  | 创建轮播、推荐或公告       |
-| POST | `/api/v1/admin/home-blocks/update`  | 修改首页内容，body 传 `id` |
-| POST | `/api/v1/admin/home-blocks/delete`  | 删除首页内容，body 传 `id` |
-| GET  | `/api/v1/admin/analytics/dashboard` | 销售、转化和热销商品统计   |
-| GET  | `/api/v1/admin/orders/export`       | 导出最多 10000 条订单 CSV  |
+| 方法 | 路径                                        | 说明                             |
+| ---- | ------------------------------------------- | -------------------------------- |
+| GET  | `/api/v1/admin/home-blocks`                 | 首页配置列表                     |
+| POST | `/api/v1/admin/home-blocks/create`          | 创建轮播、推荐或公告             |
+| POST | `/api/v1/admin/home-blocks/update`          | 修改首页内容，body 传 `id`       |
+| POST | `/api/v1/admin/home-blocks/delete`          | 删除首页内容，body 传 `id`       |
+| GET  | `/api/v1/admin/analytics/dashboard`         | 销售、转化和热销商品统计         |
+| GET  | `/api/v1/admin/analytics/platform-overview` | 多商户、交易、资金负债和待办总览 |
+| GET  | `/api/v1/admin/orders/export`               | 导出最多 10000 条订单 CSV        |
 
 ## 售后与退款
 
@@ -240,3 +241,5 @@
 金额统一使用“分”，`commissionRateBps` 使用万分比，例如 `500` 表示 5%。支付成功后商户净收入进入待结算余额；只有已完成订单可以生成结算单并转入可用余额。提现申请会冻结可用余额，平台驳回时原路恢复，完成打款后计入累计提现。
 
 成员权限规则：OWNER 可以管理 ADMIN 和 STAFF；ADMIN 只能添加、调整或停用 STAFF；OWNER 不能通过普通成员接口被修改。商户写接口会异步记录操作者、店铺、请求参数、结果状态和请求 ID，银行卡号等敏感字段在审计载荷中会被脱敏。
+
+商户经营看板同时返回订单转化指标和财务指标，包括支付收入、退款、佣金、商户净收入、账户余额、结算金额及提现状态。平台总览按相同时间范围汇总商户与店铺数量、平台订单、实付与退款、平台佣金、商户资金负债、待处理任务和商户净收入排行。

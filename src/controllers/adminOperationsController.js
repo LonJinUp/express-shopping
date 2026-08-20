@@ -18,6 +18,9 @@ export async function deleteHomeBlock(req, res) {
 export async function dashboard(req, res) {
 	return res.success(await analyticsService.dashboard(req.query))
 }
+export async function platformOverview(req, res) {
+	return res.success(await analyticsService.platformOverview(req.query))
+}
 export async function exportOrders(req, res) {
 	const csv = await analyticsService.exportOrders(req.query)
 	res.setHeader('Content-Type', 'text/csv; charset=utf-8')

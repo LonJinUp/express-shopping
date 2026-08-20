@@ -5,6 +5,7 @@ import {
 	deleteHomeBlock,
 	exportOrders,
 	listHomeBlocks,
+	platformOverview,
 	updateHomeBlock,
 } from '../controllers/adminOperationsController.js'
 import { authenticate, authorize } from '../middlewares/auth.js'
@@ -25,4 +26,5 @@ adminOperationsRouter.post('/home-blocks/create', checkContentSafety, validate(h
 adminOperationsRouter.post('/home-blocks/update', checkContentSafety, validate(homeBlockUpdateSchema), updateHomeBlock)
 adminOperationsRouter.post('/home-blocks/delete', validate(homeBlockIdSchema), deleteHomeBlock)
 adminOperationsRouter.get('/analytics/dashboard', validate(dashboardQuerySchema, 'query'), dashboard)
+adminOperationsRouter.get('/analytics/platform-overview', validate(dashboardQuerySchema, 'query'), platformOverview)
 adminOperationsRouter.get('/orders/export', validate(exportOrderQuerySchema, 'query'), exportOrders)

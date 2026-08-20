@@ -693,6 +693,16 @@ const paths = {
 			],
 		}),
 	},
+	'/api/v1/admin/analytics/platform-overview': {
+		get: operation('平台多商户经营总览', '运营管理', {
+			admin: true,
+			parameters: [
+				queryParameter('startDate', dateTime, '开始时间'),
+				queryParameter('endDate', dateTime, '结束时间'),
+				queryParameter('limit', { type: 'integer', minimum: 1, maximum: 100, default: 10 }, '商户排行数量'),
+			],
+		}),
+	},
 
 	'/api/v1/admin/after-sales': {
 		get: operation('管理端售后列表', '售后管理', {

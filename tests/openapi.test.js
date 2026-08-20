@@ -91,6 +91,7 @@ const requiredOperations = [
 	['post', '/api/v1/admin/home-blocks/update'],
 	['post', '/api/v1/admin/home-blocks/delete'],
 	['get', '/api/v1/admin/analytics/dashboard'],
+	['get', '/api/v1/admin/analytics/platform-overview'],
 	['get', '/api/v1/admin/after-sales'],
 	['get', '/api/v1/admin/after-sales/detail'],
 	['post', '/api/v1/admin/after-sales/review'],
