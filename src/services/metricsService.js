@@ -40,6 +40,13 @@ const dependencyUp = new client.Gauge({
 	registers: [registry],
 })
 
+const notificationOutboxJobs = new client.Gauge({
+	name: 'express_shop_notification_outbox_jobs',
+	help: 'Current number of notification outbox jobs by actionable status',
+	labelNames: ['status'],
+	registers: [registry],
+})
+
 function routeLabel(req) {
 	if (!req.route?.path) return 'unmatched'
 	return `${req.baseUrl || ''}${req.route.path}` || '/'
@@ -59,6 +66,12 @@ export function recordTaskMetric(task, result) {
 
 export function recordDependencyMetric(dependency, up) {
 	dependencyUp.set({ dependency }, up ? 1 : 0)
+}
+
+export function recordNotificationOutboxMetrics(counts) {
+	for (const status of ['PENDING', 'PROCESSING', 'FAILED', 'EXHAUSTED']) {
+		notificationOutboxJobs.set({ status: status.toLowerCase() }, counts[status] ?? 0)
+	}
 }
 
 export async function metricsText() {

@@ -8,7 +8,7 @@
 Authorization: Bearer <METRICS_TOKEN>
 ```
 
-指标包括 Node.js 进程、HTTP 请求数与延迟、MySQL/Redis 可用性，以及后台巡检任务的成功和失败次数。HTTP 路由使用 Express 路由模板作为标签，不包含用户、订单号等高基数信息。
+指标包括 Node.js 进程、HTTP 请求数与延迟、MySQL/Redis 可用性、后台巡检任务的成功和失败次数，以及通知发件箱各可操作状态的当前任务数。HTTP 路由使用 Express 路由模板作为标签，不包含用户、订单号等高基数信息。
 
 ## 建议告警
 
@@ -19,6 +19,8 @@ Authorization: Bearer <METRICS_TOKEN>
 - 超时巡检任务超过 5 分钟没有成功完成
 - `data-retention-cleanup` 超过 26 小时没有成功完成
 - 支付单出现“主动查询已达最大次数”时立即告警
+- `express_shop_notification_outbox_jobs{status="exhausted"}` 大于 0 时立即告警
+- `express_shop_notification_outbox_jobs{status="pending"}` 持续增长或 10 分钟不下降时告警
 
 ## 日志
 

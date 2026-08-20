@@ -676,8 +676,11 @@ describe.sequential('MySQL integration', () => {
 	})
 
 	it('retries failed notification delivery until the attempt limit is exhausted', async () => {
-		const { userRole } = await seedBase()
-		const user = await createUser(userRole, 'notification-retry')
+		const { userRole, adminRole } = await seedBase()
+		const [user, admin] = await Promise.all([
+			createUser(userRole, 'notification-retry'),
+			createUser(adminRole, 'notification-admin'),
+		])
 		const outbox = await prisma.notificationOutbox.create({
 			data: {
 				channel: 'UNAVAILABLE_CHANNEL',
@@ -701,6 +704,43 @@ describe.sequential('MySQL integration', () => {
 			attempts: 2,
 		})
 		expect(await processNotificationOutbox()).toEqual({ processedCount: 0, failedCount: 0 })
+
+		const login = async (account) => {
+			const response = await request(app)
+				.post('/api/v1/auth/login')
+				.send({ identifier: account.email, password: 'password123' })
+				.expect(200)
+			return response.body.data.accessToken
+		}
+		const [userToken, adminToken] = await Promise.all([login(user), login(admin)])
+		await request(app)
+			.get('/api/v1/admin/notification-outbox?status=EXHAUSTED')
+			.set('authorization', `Bearer ${userToken}`)
+			.expect(403)
+		const list = await request(app)
+			.get('/api/v1/admin/notification-outbox?status=EXHAUSTED')
+			.set('authorization', `Bearer ${adminToken}`)
+			.expect(200)
+		expect(list.body.data.pagination.total).toBe(1)
+		expect(list.body.data.summary.EXHAUSTED).toBe(1)
+		expect(list.body.data.items[0]).toMatchObject({ id: outbox.id, user: { id: user.id } })
+
+		const retried = await request(app)
+			.post('/api/v1/admin/notification-outbox/retry')
+			.set('authorization', `Bearer ${adminToken}`)
+			.send({ id: outbox.id })
+			.expect(200)
+		expect(retried.body.data).toMatchObject({ status: 'PENDING', attempts: 0, lastError: null })
+		await request(app)
+			.post('/api/v1/admin/notification-outbox/retry')
+			.set('authorization', `Bearer ${adminToken}`)
+			.send({ id: outbox.id })
+			.expect(409)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 0, failedCount: 1 })
+		expect(await prisma.notificationOutbox.findUnique({ where: { id: outbox.id } })).toMatchObject({
+			status: 'FAILED',
+			attempts: 1,
+		})
 	})
 
 	it('handles concurrent delivery of the same payment callback', async () => {

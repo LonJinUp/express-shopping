@@ -782,6 +782,25 @@ const paths = {
 	'/api/v1/admin/shops/commission/update': {
 		post: operation('设置店铺佣金比例', '平台财务', { admin: true, body: schema('CommissionUpdateInput') }),
 	},
+	'/api/v1/admin/notification-outbox': {
+		get: operation('通知发件箱任务列表', '通知运维', {
+			admin: true,
+			parameters: [
+				...pagination,
+				queryParameter(
+					'status',
+					{ type: 'string', enum: ['PENDING', 'PROCESSING', 'SENT', 'FAILED', 'EXHAUSTED'] },
+					'投递状态'
+				),
+				queryParameter('channel', { type: 'string', maxLength: 30 }, '通知渠道'),
+				queryParameter('userId', id, '接收用户 ID'),
+				queryParameter('eventKey', { type: 'string', maxLength: 120 }, '事件键关键词'),
+			],
+		}),
+	},
+	'/api/v1/admin/notification-outbox/retry': {
+		post: operation('重新投递失败通知', '通知运维', { admin: true, body: schema('IdInput') }),
+	},
 }
 
 export const openapiDocument = {
@@ -817,6 +836,7 @@ export const openapiDocument = {
 		{ name: '订单管理' },
 		{ name: '运营管理' },
 		{ name: '售后管理' },
+		{ name: '通知运维' },
 	],
 	paths,
 	components: {

@@ -37,6 +37,8 @@
 
 支付成功、订单发货、退款成功和平台仲裁完成会在原业务事务内写入通知发件箱。定时任务异步投递站内通知，使用事件键防重并对失败任务进行指数退避重试。
 
+管理员可通过 `GET /api/v1/admin/notification-outbox` 按状态、渠道、用户和事件键查询投递任务及状态汇总。`POST /api/v1/admin/notification-outbox/retry` 可将 `FAILED` 或 `EXHAUSTED` 任务重新入队，任务 ID 通过 body 传递。
+
 ## 商城目录
 
 | 方法 | 路径                      | 权限 | 说明                                |

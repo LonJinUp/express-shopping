@@ -1,8 +1,12 @@
 import { prisma } from '../config/prisma.js'
 import { env } from '../config/env.js'
 import { dispatchNotification } from './notificationChannelService.js'
+import { recordNotificationOutboxMetrics } from './metricsService.js'
+import { ERROR_CODES } from '../constants/errorCodes.js'
+import { AppError } from '../errors/AppError.js'
 
 const PROCESSING_TIMEOUT_MS = 5 * 60 * 1000
+const OUTBOX_STATUSES = ['PENDING', 'PROCESSING', 'SENT', 'FAILED', 'EXHAUSTED']
 
 export function enqueueNotification(tx, input) {
 	return tx.notificationOutbox.upsert({
@@ -59,6 +63,52 @@ export async function markAllNotificationsRead(userId) {
 	return { updatedCount: result.count }
 }
 
+export async function listNotificationOutbox(query) {
+	const where = {
+		...(query.status ? { status: query.status } : {}),
+		...(query.channel ? { channel: query.channel } : {}),
+		...(query.userId ? { userId: query.userId } : {}),
+		...(query.eventKey ? { eventKey: { contains: query.eventKey } } : {}),
+	}
+	const skip = (query.page - 1) * query.pageSize
+	const [total, items, groups] = await prisma.$transaction([
+		prisma.notificationOutbox.count({ where }),
+		prisma.notificationOutbox.findMany({
+			where,
+			skip,
+			take: query.pageSize,
+			orderBy: { createdAt: 'desc' },
+			include: { user: { select: { id: true, nickname: true, email: true, phone: true } } },
+		}),
+		prisma.notificationOutbox.groupBy({ by: ['status'], _count: { _all: true } }),
+	])
+	const summary = Object.fromEntries(OUTBOX_STATUSES.map((status) => [status, 0]))
+	for (const item of groups) summary[item.status] = item._count._all
+	return {
+		items,
+		summary,
+		pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.ceil(total / query.pageSize) },
+	}
+}
+
+export async function retryNotificationOutbox(id) {
+	const changed = await prisma.notificationOutbox.updateMany({
+		where: { id, status: { in: ['FAILED', 'EXHAUSTED'] } },
+		data: { status: 'PENDING', attempts: 0, nextAttemptAt: new Date(), lockedAt: null, lastError: null },
+	})
+	if (!changed.count) {
+		const exists = await prisma.notificationOutbox.count({ where: { id } })
+		if (!exists) throw new AppError('通知任务不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
+		throw new AppError('通知任务当前状态不能重试', { statusCode: 409, code: ERROR_CODES.CONFLICT })
+	}
+	return prisma.notificationOutbox.findUnique({ where: { id } })
+}
+
+async function refreshNotificationOutboxMetrics() {
+	const groups = await prisma.notificationOutbox.groupBy({ by: ['status'], _count: { _all: true } })
+	recordNotificationOutboxMetrics(Object.fromEntries(groups.map((item) => [item.status, item._count._all])))
+}
+
 function retryAt(attempts) {
 	const multiplier = 2 ** Math.min(attempts - 1, 6)
 	return new Date(Date.now() + env.NOTIFICATION_OUTBOX_RETRY_SECONDS * multiplier * 1000)
@@ -109,6 +159,7 @@ export async function processNotificationOutbox(now = new Date()) {
 	})
 	const runnable = candidates.filter((item) => item.attempts < item.maxAttempts)
 	const results = await Promise.allSettled(runnable.map(processOne))
+	await refreshNotificationOutboxMetrics()
 	return {
 		processedCount: results.filter((result) => result.status === 'fulfilled' && result.value).length,
 		failedCount: results.filter((result) => result.status === 'rejected' || !result.value).length,

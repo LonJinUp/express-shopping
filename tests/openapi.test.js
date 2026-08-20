@@ -119,6 +119,8 @@ const requiredOperations = [
 	['get', '/api/v1/admin/finance/withdrawals'],
 	['post', '/api/v1/admin/finance/withdrawals/review'],
 	['post', '/api/v1/admin/shops/commission/update'],
+	['get', '/api/v1/admin/notification-outbox'],
+	['post', '/api/v1/admin/notification-outbox/retry'],
 ]
 
 describe('OpenAPI document', () => {
