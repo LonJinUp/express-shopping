@@ -65,6 +65,7 @@ const orderStatuses = [
 ]
 const afterSaleStatuses = [
 	'PENDING',
+	'ARBITRATING',
 	'APPROVED',
 	'WAITING_RETURN',
 	'RETURNED',
@@ -432,6 +433,12 @@ const paths = {
 			body: schema('ShipmentInput'),
 		}),
 	},
+	'/api/v1/after-sales/arbitration/request': {
+		post: operation('申请平台介入售后', '售后', {
+			auth: true,
+			body: schema('ArbitrationRequestInput'),
+		}),
+	},
 
 	'/api/v1/admin/categories/create': {
 		post: operation('创建分类', '商品管理', { admin: true, body: schema('CategoryInput') }),
@@ -662,6 +669,21 @@ const paths = {
 		post: operation('模拟退款', '售后管理', {
 			admin: true,
 			body: schema('AfterSaleMockRefundInput'),
+		}),
+	},
+	'/api/v1/admin/after-sales/arbitrations': {
+		get: operation('平台仲裁列表', '售后管理', {
+			admin: true,
+			parameters: [
+				...pagination,
+				queryParameter('status', { type: 'string', enum: ['PENDING', 'RESOLVED'] }, '仲裁状态'),
+			],
+		}),
+	},
+	'/api/v1/admin/after-sales/arbitrations/resolve': {
+		post: operation('处理平台仲裁', '售后管理', {
+			admin: true,
+			body: schema('ArbitrationResolveInput'),
 		}),
 	},
 }
@@ -1016,6 +1038,25 @@ export const openapiDocument = {
 					action: { type: 'string', enum: ['APPROVE', 'REJECT'] },
 					approvedAmount: money,
 					remark: { type: 'string', maxLength: 500 },
+				},
+			},
+			ArbitrationRequestInput: {
+				type: 'object',
+				required: ['id', 'reason'],
+				properties: {
+					id,
+					reason: { type: 'string', minLength: 2, maxLength: 500 },
+					evidence: { type: 'array', maxItems: 10, items: { type: 'string', format: 'uri', maxLength: 500 } },
+				},
+			},
+			ArbitrationResolveInput: {
+				type: 'object',
+				required: ['id', 'decision', 'remark'],
+				properties: {
+					id,
+					decision: { type: 'string', enum: ['APPROVE', 'REJECT'] },
+					approvedAmount: { ...money, minimum: 1 },
+					remark: { type: 'string', minLength: 2, maxLength: 500 },
 				},
 			},
 			ChannelRefundInput: {

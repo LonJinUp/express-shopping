@@ -3,6 +3,7 @@ import {
 	createAfterSale,
 	getAfterSale,
 	listAfterSales,
+	requestArbitration,
 	refundCallback,
 	submitReturnShipment,
 } from '../controllers/afterSaleController.js'
@@ -13,6 +14,7 @@ import { validate } from '../middlewares/validate.js'
 import {
 	afterSaleIdSchema,
 	afterSaleListSchema,
+	arbitrationRequestSchema,
 	createAfterSaleSchema,
 	refundCallbackSchema,
 	returnShipmentSchema,
@@ -32,3 +34,10 @@ afterSaleRouter.post(
 afterSaleRouter.get('/after-sales', authenticate, validate(afterSaleListSchema, 'query'), listAfterSales)
 afterSaleRouter.get('/after-sales/detail', authenticate, validate(afterSaleIdSchema, 'query'), getAfterSale)
 afterSaleRouter.post('/after-sales/return-shipment', authenticate, validate(returnShipmentSchema), submitReturnShipment)
+afterSaleRouter.post(
+	'/after-sales/arbitration/request',
+	authenticate,
+	checkContentSafety,
+	validate(arbitrationRequestSchema),
+	requestArbitration
+)

@@ -6,12 +6,13 @@ import { createAfterSaleNo, createRefundNo } from '../utils/transactionNo.js'
 import { buildAfterSaleOverdueWhere } from './afterSaleReminderService.js'
 import { calculateAfterSaleAmount } from './refundCalculationService.js'
 
-const activeStatuses = ['PENDING', 'APPROVED', 'WAITING_RETURN', 'RETURNED', 'REFUNDING']
+const activeStatuses = ['PENDING', 'ARBITRATING', 'APPROVED', 'WAITING_RETURN', 'RETURNED', 'REFUNDING']
 const applicableOrderStatuses = ['PAID', 'PROCESSING', 'SHIPPED', 'COMPLETED']
 const detailInclude = {
 	items: { include: { orderItem: true } },
 	logs: { orderBy: { createdAt: 'asc' } },
 	refund: true,
+	arbitration: { include: { resolver: { select: { id: true, nickname: true } } } },
 	order: { select: { orderNo: true, status: true, paidAmount: true, refundedAmount: true } },
 }
 
@@ -279,6 +280,158 @@ export async function getAfterSale(userId, id) {
 	const item = await prisma.afterSale.findFirst({ where: { id, userId }, include: detailInclude })
 	if (!item) throw new AppError('售后单不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
 	return item
+}
+
+export async function requestArbitration(userId, id, input) {
+	return prisma.$transaction(
+		async (tx) => {
+			const afterSale = await tx.afterSale.findFirst({
+				where: { id, userId },
+				include: { arbitration: true },
+			})
+			if (!afterSale) throw new AppError('售后单不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
+			if (afterSale.arbitration) {
+				return tx.afterSaleArbitration.findUnique({
+					where: { afterSaleId: id },
+					include: { resolver: { select: { id: true, nickname: true } } },
+				})
+			}
+			const merchantRejected = afterSale.status === 'REJECTED'
+			const merchantOverdue = afterSale.status === 'PENDING' && afterSale.remindedAt
+			if (!merchantRejected && !merchantOverdue) {
+				throw new AppError('当前售后状态不能申请平台介入', { statusCode: 409, code: ERROR_CODES.CONFLICT })
+			}
+
+			const changed = await tx.afterSale.updateMany({
+				where: { id, status: afterSale.status },
+				data: { status: 'ARBITRATING', remindedAt: null },
+			})
+			if (!changed.count)
+				throw new AppError('售后状态已变化，请刷新后重试', { statusCode: 409, code: ERROR_CODES.CONFLICT })
+			const arbitration = await tx.afterSaleArbitration.create({
+				data: { afterSaleId: id, userId, reason: input.reason, evidence: input.evidence },
+			})
+			await tx.order.update({ where: { id: afterSale.orderId }, data: { status: 'AFTER_SALE' } })
+			await tx.afterSaleLog.create({
+				data: {
+					afterSaleId: id,
+					fromStatus: afterSale.status,
+					toStatus: 'ARBITRATING',
+					action: 'ARBITRATION_REQUEST',
+					operatorId: userId,
+					remark: input.reason,
+				},
+			})
+			await tx.orderLog.create({
+				data: {
+					orderId: afterSale.orderId,
+					fromStatus: merchantRejected ? afterSale.previousOrderStatus : 'AFTER_SALE',
+					toStatus: 'AFTER_SALE',
+					action: 'ARBITRATION_REQUEST',
+					operatorId: userId,
+					remark: input.reason,
+				},
+			})
+			return arbitration
+		},
+		{ isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+	)
+}
+
+export async function listArbitrations(query) {
+	const where = query.status ? { status: query.status } : {}
+	const skip = (query.page - 1) * query.pageSize
+	const [total, items] = await prisma.$transaction([
+		prisma.afterSaleArbitration.count({ where }),
+		prisma.afterSaleArbitration.findMany({
+			where,
+			skip,
+			take: query.pageSize,
+			orderBy: { createdAt: 'desc' },
+			include: {
+				user: { select: { id: true, nickname: true, email: true, phone: true } },
+				resolver: { select: { id: true, nickname: true } },
+				afterSale: {
+					include: {
+						items: { include: { orderItem: true } },
+						order: { include: { shop: { select: { id: true, name: true, code: true } } } },
+					},
+				},
+			},
+		}),
+	])
+	return {
+		items,
+		pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.ceil(total / query.pageSize) },
+	}
+}
+
+export async function resolveArbitration(id, input, operatorId) {
+	return prisma.$transaction(
+		async (tx) => {
+			const arbitration = await tx.afterSaleArbitration.findFirst({
+				where: { id, status: 'PENDING' },
+				include: { afterSale: true },
+			})
+			if (!arbitration || arbitration.afterSale.status !== 'ARBITRATING') {
+				throw new AppError('仲裁单不存在或已处理', { statusCode: 409, code: ERROR_CODES.CONFLICT })
+			}
+			const afterSale = arbitration.afterSale
+			let nextStatus = 'REJECTED'
+			let orderStatus = afterSale.previousOrderStatus
+			let approvedAmount = null
+			if (input.decision === 'APPROVE') {
+				approvedAmount = input.approvedAmount ?? afterSale.requestedAmount
+				if (approvedAmount <= 0 || approvedAmount > afterSale.requestedAmount) {
+					throw new AppError('仲裁核准退款金额无效', { statusCode: 422, code: ERROR_CODES.VALIDATION_ERROR })
+				}
+				nextStatus = afterSale.type === 'RETURN_REFUND' ? 'WAITING_RETURN' : 'REFUNDING'
+				orderStatus = afterSale.type === 'RETURN_REFUND' ? 'AFTER_SALE' : 'REFUNDING'
+			}
+
+			await tx.afterSaleArbitration.update({
+				where: { id },
+				data: {
+					status: 'RESOLVED',
+					decision: input.decision,
+					decisionRemark: input.remark,
+					resolvedById: operatorId,
+					resolvedAt: new Date(),
+				},
+			})
+			await tx.afterSale.update({
+				where: { id: afterSale.id },
+				data: {
+					status: nextStatus,
+					approvedAmount,
+					merchantRemark: input.decision === 'APPROVE' ? afterSale.merchantRemark : input.remark,
+				},
+			})
+			await tx.order.update({ where: { id: afterSale.orderId }, data: { status: orderStatus } })
+			await tx.afterSaleLog.create({
+				data: {
+					afterSaleId: afterSale.id,
+					fromStatus: 'ARBITRATING',
+					toStatus: nextStatus,
+					action: `ARBITRATION_${input.decision}`,
+					operatorId,
+					remark: input.remark,
+				},
+			})
+			await tx.orderLog.create({
+				data: {
+					orderId: afterSale.orderId,
+					fromStatus: 'AFTER_SALE',
+					toStatus: orderStatus,
+					action: `ARBITRATION_${input.decision}`,
+					operatorId,
+					remark: input.remark,
+				},
+			})
+			return tx.afterSale.findUnique({ where: { id: afterSale.id }, include: detailInclude })
+		},
+		{ isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+	)
 }
 
 export async function submitReturnShipment(userId, id, input) {

@@ -86,6 +86,7 @@ enum AfterSaleType {
 
 enum AfterSaleStatus {
   PENDING
+  ARBITRATING
   APPROVED
   WAITING_RETURN
   RETURNED
@@ -93,6 +94,16 @@ enum AfterSaleStatus {
   COMPLETED
   REJECTED
   CANCELLED
+}
+
+enum AfterSaleArbitrationStatus {
+  PENDING
+  RESOLVED
+}
+
+enum AfterSaleArbitrationDecision {
+  APPROVE
+  REJECT
 }
 
 enum RefundStatus {
@@ -162,30 +173,32 @@ model Shop {
 }
 
 model User {
-  id                           String                @id @default(cuid()) @db.VarChar(30)
-  email                        String?               @unique @db.VarChar(191)
-  phone                        String?               @unique @db.VarChar(30)
-  passwordHash                 String                @db.VarChar(191)
-  nickname                     String                @db.VarChar(80)
-  avatarUrl                    String?               @db.VarChar(500)
-  status                       UserStatus            @default(ACTIVE)
-  createdAt                    DateTime              @default(now())
-  updatedAt                    DateTime              @updatedAt
-  addresses                    UserAddress[]
-  roles                        UserRole[]
-  cartItems                    CartItem[]
-  orders                       Order[]
-  platformOrders               PlatformOrder[]
-  sessions                     UserSession[]
-  passwordResetTokens          PasswordResetToken[]
-  reviews                      Review[]
-  coupons                      UserCoupon[]
-  favorites                    Favorite[]
-  browsingHistory              BrowsingHistory[]
-  afterSales                   AfterSale[]
-  merchantApplications         MerchantApplication[] @relation("MerchantApplicationApplicant")
-  reviewedMerchantApplications MerchantApplication[] @relation("MerchantApplicationReviewer")
-  merchantMemberships          MerchantMember[]
+  id                            String                 @id @default(cuid()) @db.VarChar(30)
+  email                         String?                @unique @db.VarChar(191)
+  phone                         String?                @unique @db.VarChar(30)
+  passwordHash                  String                 @db.VarChar(191)
+  nickname                      String                 @db.VarChar(80)
+  avatarUrl                     String?                @db.VarChar(500)
+  status                        UserStatus             @default(ACTIVE)
+  createdAt                     DateTime               @default(now())
+  updatedAt                     DateTime               @updatedAt
+  addresses                     UserAddress[]
+  roles                         UserRole[]
+  cartItems                     CartItem[]
+  orders                        Order[]
+  platformOrders                PlatformOrder[]
+  sessions                      UserSession[]
+  passwordResetTokens           PasswordResetToken[]
+  reviews                       Review[]
+  coupons                       UserCoupon[]
+  favorites                     Favorite[]
+  browsingHistory               BrowsingHistory[]
+  afterSales                    AfterSale[]
+  afterSaleArbitrations         AfterSaleArbitration[] @relation("AfterSaleArbitrationApplicant")
+  resolvedAfterSaleArbitrations AfterSaleArbitration[] @relation("AfterSaleArbitrationResolver")
+  merchantApplications          MerchantApplication[]  @relation("MerchantApplicationApplicant")
+  reviewedMerchantApplications  MerchantApplication[]  @relation("MerchantApplicationReviewer")
+  merchantMemberships           MerchantMember[]
 }
 
 model PlatformOrder {
@@ -794,36 +807,59 @@ model AuditLog {
 }
 
 model AfterSale {
-  id                   String          @id @default(cuid()) @db.VarChar(30)
-  afterSaleNo          String          @unique @db.VarChar(32)
-  clientRequestId      String          @db.VarChar(64)
-  orderId              String          @db.VarChar(30)
-  userId               String          @db.VarChar(30)
+  id                   String                @id @default(cuid()) @db.VarChar(30)
+  afterSaleNo          String                @unique @db.VarChar(32)
+  clientRequestId      String                @db.VarChar(64)
+  orderId              String                @db.VarChar(30)
+  userId               String                @db.VarChar(30)
   type                 AfterSaleType
-  status               AfterSaleStatus @default(PENDING)
+  status               AfterSaleStatus       @default(PENDING)
   previousOrderStatus  OrderStatus
-  reason               String          @db.VarChar(255)
-  description          String?         @db.VarChar(1000)
-  requestedAmount      Int             @db.UnsignedInt
-  approvedAmount       Int?            @db.UnsignedInt
-  returnCarrierCode    String?         @db.VarChar(50)
-  returnCarrierName    String?         @db.VarChar(80)
-  returnTrackingNumber String?         @db.VarChar(100)
-  merchantRemark       String?         @db.VarChar(500)
+  reason               String                @db.VarChar(255)
+  description          String?               @db.VarChar(1000)
+  requestedAmount      Int                   @db.UnsignedInt
+  approvedAmount       Int?                  @db.UnsignedInt
+  returnCarrierCode    String?               @db.VarChar(50)
+  returnCarrierName    String?               @db.VarChar(80)
+  returnTrackingNumber String?               @db.VarChar(100)
+  merchantRemark       String?               @db.VarChar(500)
   stockReturnedAt      DateTime?
   remindedAt           DateTime?
   completedAt          DateTime?
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
-  order                Order           @relation(fields: [orderId], references: [id])
-  user                 User            @relation(fields: [userId], references: [id])
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  order                Order                 @relation(fields: [orderId], references: [id])
+  user                 User                  @relation(fields: [userId], references: [id])
   items                AfterSaleItem[]
   logs                 AfterSaleLog[]
   refund               Refund?
+  arbitration          AfterSaleArbitration?
 
   @@unique([userId, clientRequestId])
   @@index([orderId, status])
   @@index([status, createdAt])
+}
+
+model AfterSaleArbitration {
+  id             String                        @id @default(cuid()) @db.VarChar(30)
+  afterSaleId    String                        @unique @db.VarChar(30)
+  userId         String                        @db.VarChar(30)
+  status         AfterSaleArbitrationStatus    @default(PENDING)
+  reason         String                        @db.VarChar(500)
+  evidence       Json?
+  decision       AfterSaleArbitrationDecision?
+  decisionRemark String?                       @db.VarChar(500)
+  resolvedById   String?                       @db.VarChar(30)
+  resolvedAt     DateTime?
+  createdAt      DateTime                      @default(now())
+  updatedAt      DateTime                      @updatedAt
+  afterSale      AfterSale                     @relation(fields: [afterSaleId], references: [id], onDelete: Cascade)
+  user           User                          @relation("AfterSaleArbitrationApplicant", fields: [userId], references: [id])
+  resolver       User?                         @relation("AfterSaleArbitrationResolver", fields: [resolvedById], references: [id])
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@index([resolvedById, resolvedAt])
 }
 
 model AfterSaleItem {

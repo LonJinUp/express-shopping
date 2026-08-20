@@ -4,9 +4,11 @@ import {
 	createRefund,
 	getAfterSale,
 	listAfterSales,
+	listArbitrations,
 	mockRefund,
 	reviewAfterSale,
 	retryRefund,
+	resolveArbitration,
 } from '../controllers/adminAfterSaleController.js'
 import { authenticate, authorize } from '../middlewares/auth.js'
 import { checkContentSafety } from '../middlewares/contentSafety.js'
@@ -16,6 +18,8 @@ import {
 	afterSaleListSchema,
 	afterSaleReviewSchema,
 	afterSaleActionSchema,
+	arbitrationListSchema,
+	arbitrationResolveSchema,
 	afterSaleMockRefundSchema,
 	channelRefundSchema,
 } from '../validators/afterSaleValidator.js'
@@ -29,3 +33,10 @@ adminAfterSaleRouter.post('/after-sales/confirm-return', validate(afterSaleActio
 adminAfterSaleRouter.post('/after-sales/refund', validate(channelRefundSchema), createRefund)
 adminAfterSaleRouter.post('/after-sales/retry-refund', validate(afterSaleActionSchema), retryRefund)
 adminAfterSaleRouter.post('/after-sales/mock-refund', validate(afterSaleMockRefundSchema), mockRefund)
+adminAfterSaleRouter.get('/after-sales/arbitrations', validate(arbitrationListSchema, 'query'), listArbitrations)
+adminAfterSaleRouter.post(
+	'/after-sales/arbitrations/resolve',
+	checkContentSafety,
+	validate(arbitrationResolveSchema),
+	resolveArbitration
+)

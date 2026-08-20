@@ -11,6 +11,8 @@ import {
 	createRefund,
 	mockRefund,
 	processRefundCallback,
+	requestArbitration,
+	resolveArbitration,
 	retryRefund,
 	reviewAfterSale,
 } from '../../src/services/afterSaleService.js'
@@ -663,6 +665,59 @@ describe.sequential('MySQL integration', () => {
 		expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
 		expect(results.filter(({ status }) => status === 'rejected')).toHaveLength(1)
 		expect(await prisma.afterSale.count({ where: { orderId: order.id } })).toBe(1)
+	})
+
+	it('lets the buyer request arbitration and the platform override a merchant rejection', async () => {
+		const { userRole, adminRole } = await seedBase()
+		const [buyer, outsider, admin] = await Promise.all([
+			createUser(userRole, 'arbitration-buyer'),
+			createUser(userRole, 'arbitration-outsider'),
+			createUser(adminRole, 'arbitration-admin'),
+		])
+		const sku = await createActiveProduct(admin.id, 1)
+		const order = await createPaidOrder(buyer, sku, 1, 'arbitration-order')
+		const { afterSale } = await createAfterSale(buyer.id, {
+			clientRequestId: 'arbitration-after-sale-001',
+			orderId: order.id,
+			type: 'REFUND_ONLY',
+			reason: '商品与描述不符',
+			items: [{ orderItemId: order.items[0].id, quantity: 1 }],
+		})
+		await reviewAfterSale(afterSale.id, { action: 'REJECT', remark: '商户不同意退款' }, admin.id)
+
+		await expect(requestArbitration(outsider.id, afterSale.id, { reason: '尝试介入他人售后' })).rejects.toMatchObject({
+			statusCode: 404,
+		})
+		const arbitration = await requestArbitration(buyer.id, afterSale.id, {
+			reason: '申请平台重新核实商品情况',
+			evidence: ['https://example.com/evidence.jpg'],
+		})
+		expect(arbitration).toMatchObject({ afterSaleId: afterSale.id, userId: buyer.id, status: 'PENDING' })
+		expect(await prisma.afterSale.findUnique({ where: { id: afterSale.id } })).toMatchObject({
+			status: 'ARBITRATING',
+		})
+
+		const userLogin = await request(app)
+			.post('/api/v1/auth/login')
+			.send({ identifier: buyer.email, password: 'password123' })
+			.expect(200)
+		await request(app)
+			.post('/api/v1/admin/after-sales/arbitrations/resolve')
+			.set('authorization', `Bearer ${userLogin.body.data.accessToken}`)
+			.send({ id: arbitration.id, decision: 'APPROVE', remark: '越权仲裁' })
+			.expect(403)
+
+		const resolved = await resolveArbitration(
+			arbitration.id,
+			{ decision: 'APPROVE', approvedAmount: afterSale.requestedAmount, remark: '平台核实后支持买家退款' },
+			admin.id
+		)
+		expect(resolved).toMatchObject({ status: 'REFUNDING', approvedAmount: afterSale.requestedAmount })
+		expect(resolved.arbitration).toMatchObject({ status: 'RESOLVED', decision: 'APPROVE', resolvedById: admin.id })
+		expect(await prisma.order.findUnique({ where: { id: order.id } })).toMatchObject({ status: 'REFUNDING' })
+		await expect(
+			resolveArbitration(arbitration.id, { decision: 'REJECT', remark: '重复处理仲裁' }, admin.id)
+		).rejects.toMatchObject({ statusCode: 409 })
 	})
 
 	it('previews and creates idempotent child orders for a cross-shop cart', async () => {

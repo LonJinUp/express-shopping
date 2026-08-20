@@ -25,3 +25,10 @@ export async function createRefund(req, res) {
 export async function retryRefund(req, res) {
 	return res.success(await service.retryRefund(req.body.id, req.user.id), '退款已重置为待处理')
 }
+export async function listArbitrations(req, res) {
+	return res.success(await service.listArbitrations(req.query))
+}
+export async function resolveArbitration(req, res) {
+	const { id, ...input } = req.body
+	return res.success(await service.resolveArbitration(id, input, req.user.id), '平台仲裁已完成')
+}

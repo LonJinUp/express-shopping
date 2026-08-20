@@ -34,8 +34,37 @@ export const afterSaleListSchema = z.object({
 	page: z.coerce.number().int().min(1).default(1),
 	pageSize: z.coerce.number().int().min(1).max(100).default(20),
 	status: z
-		.enum(['PENDING', 'APPROVED', 'WAITING_RETURN', 'RETURNED', 'REFUNDING', 'COMPLETED', 'REJECTED', 'CANCELLED'])
+		.enum([
+			'PENDING',
+			'ARBITRATING',
+			'APPROVED',
+			'WAITING_RETURN',
+			'RETURNED',
+			'REFUNDING',
+			'COMPLETED',
+			'REJECTED',
+			'CANCELLED',
+		])
 		.optional(),
+})
+
+export const arbitrationRequestSchema = z.object({
+	id,
+	reason: z.string().trim().min(2).max(500),
+	evidence: z.array(z.string().url().max(500)).max(10).optional(),
+})
+
+export const arbitrationListSchema = z.object({
+	page: z.coerce.number().int().min(1).default(1),
+	pageSize: z.coerce.number().int().min(1).max(100).default(20),
+	status: z.enum(['PENDING', 'RESOLVED']).optional(),
+})
+
+export const arbitrationResolveSchema = z.object({
+	id,
+	decision: z.enum(['APPROVE', 'REJECT']),
+	approvedAmount: z.number().int().positive().optional(),
+	remark: z.string().trim().min(2).max(500),
 })
 
 export const refundSchema = z.object({ clientRequestId: z.string().min(8).max(64) })

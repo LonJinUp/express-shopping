@@ -61,6 +61,7 @@ const requiredOperations = [
 	['get', '/api/v1/after-sales'],
 	['get', '/api/v1/after-sales/detail'],
 	['post', '/api/v1/after-sales/return-shipment'],
+	['post', '/api/v1/after-sales/arbitration/request'],
 	['post', '/api/v1/admin/categories/create'],
 	['post', '/api/v1/admin/categories/update'],
 	['post', '/api/v1/admin/brands/create'],
@@ -97,6 +98,8 @@ const requiredOperations = [
 	['post', '/api/v1/admin/after-sales/refund'],
 	['post', '/api/v1/admin/after-sales/retry-refund'],
 	['post', '/api/v1/admin/after-sales/mock-refund'],
+	['get', '/api/v1/admin/after-sales/arbitrations'],
+	['post', '/api/v1/admin/after-sales/arbitrations/resolve'],
 ]
 
 describe('OpenAPI document', () => {

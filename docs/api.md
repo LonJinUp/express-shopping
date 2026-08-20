@@ -150,20 +150,23 @@
 
 ## 售后与退款
 
-| 方法 | 路径                                       | 权限  | 说明                        |
-| ---- | ------------------------------------------ | ----- | --------------------------- |
-| POST | `/api/v1/after-sales/create`               | 登录  | 申请仅退款或退货退款        |
-| GET  | `/api/v1/after-sales`                      | 登录  | 我的售后单列表              |
-| GET  | `/api/v1/after-sales/detail`               | 登录  | 售后详情，query 传 `id`     |
-| POST | `/api/v1/after-sales/return-shipment`      | 登录  | 退货物流，body 传 `id`      |
-| POST | `/api/v1/refunds/callback`                 | 公开  | 退款回调，body 传 `channel` |
-| GET  | `/api/v1/admin/after-sales`                | ADMIN | 售后列表及待办数量          |
-| GET  | `/api/v1/admin/after-sales/detail`         | ADMIN | 售后详情，query 传 `id`     |
-| POST | `/api/v1/admin/after-sales/review`         | ADMIN | 审核，body 传 `id`          |
-| POST | `/api/v1/admin/after-sales/confirm-return` | ADMIN | 确认退货，body 传 `id`      |
-| POST | `/api/v1/admin/after-sales/refund`         | ADMIN | 创建退款，body 传 `id`      |
-| POST | `/api/v1/admin/after-sales/retry-refund`   | ADMIN | 重试退款，body 传 `id`      |
-| POST | `/api/v1/admin/after-sales/mock-refund`    | ADMIN | 模拟退款，body 传 `id`      |
+| 方法 | 路径                                             | 权限  | 说明                         |
+| ---- | ------------------------------------------------ | ----- | ---------------------------- |
+| POST | `/api/v1/after-sales/create`                     | 登录  | 申请仅退款或退货退款         |
+| GET  | `/api/v1/after-sales`                            | 登录  | 我的售后单列表               |
+| GET  | `/api/v1/after-sales/detail`                     | 登录  | 售后详情，query 传 `id`      |
+| POST | `/api/v1/after-sales/arbitration/request`        | 登录  | 对驳回或逾期售后申请平台介入 |
+| POST | `/api/v1/after-sales/return-shipment`            | 登录  | 退货物流，body 传 `id`       |
+| POST | `/api/v1/refunds/callback`                       | 公开  | 退款回调，body 传 `channel`  |
+| GET  | `/api/v1/admin/after-sales`                      | ADMIN | 售后列表及待办数量           |
+| GET  | `/api/v1/admin/after-sales/detail`               | ADMIN | 售后详情，query 传 `id`      |
+| GET  | `/api/v1/admin/after-sales/arbitrations`         | ADMIN | 平台仲裁列表                 |
+| POST | `/api/v1/admin/after-sales/arbitrations/resolve` | ADMIN | 仲裁批准或驳回               |
+| POST | `/api/v1/admin/after-sales/review`               | ADMIN | 审核，body 传 `id`           |
+| POST | `/api/v1/admin/after-sales/confirm-return`       | ADMIN | 确认退货，body 传 `id`       |
+| POST | `/api/v1/admin/after-sales/refund`               | ADMIN | 创建退款，body 传 `id`       |
+| POST | `/api/v1/admin/after-sales/retry-refund`         | ADMIN | 重试退款，body 传 `id`       |
+| POST | `/api/v1/admin/after-sales/mock-refund`          | ADMIN | 模拟退款，body 传 `id`       |
 
 退款金额由服务端按订单项实付金额和数量比例计算。未退完全部商品时不退运费；一次或分批退完全部商品时，在最后一笔退还运费。全额退款时，未过期优惠券恢复为可用，已过期则标记过期。
 

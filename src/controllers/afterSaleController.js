@@ -18,6 +18,10 @@ export async function submitReturnShipment(req, res) {
 	const { id, ...input } = req.body
 	return res.success(await service.submitReturnShipment(req.user.id, id, input), '退货物流已提交')
 }
+export async function requestArbitration(req, res) {
+	const { id, ...input } = req.body
+	return res.success(await service.requestArbitration(req.user.id, id, input), '平台介入申请已提交', 201)
+}
 export async function refundCallback(req, res) {
 	return res.success(
 		await service.processRefundCallback(req.body.channel.toUpperCase(), req.body),
