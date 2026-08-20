@@ -15,19 +15,20 @@ function dateRange(query) {
 	return { startDate, endDate }
 }
 
-export async function dashboard(query) {
+export async function dashboard(query, shopId) {
 	const { startDate, endDate } = dateRange(query)
 	const createdAt = { gte: startDate, lte: endDate }
+	const orderWhere = { createdAt, ...(shopId ? { shopId } : {}) }
 	const [orderCount, paidAggregate, paidOrderCount, hotProducts] = await prisma.$transaction([
-		prisma.order.count({ where: { createdAt } }),
+		prisma.order.count({ where: orderWhere }),
 		prisma.order.aggregate({
-			where: { createdAt, status: { in: paidStatuses } },
+			where: { ...orderWhere, status: { in: paidStatuses } },
 			_sum: { paidAmount: true, refundedAmount: true },
 		}),
-		prisma.order.count({ where: { createdAt, status: { in: paidStatuses } } }),
+		prisma.order.count({ where: { ...orderWhere, status: { in: paidStatuses } } }),
 		prisma.orderItem.groupBy({
 			by: ['skuId', 'productName'],
-			where: { order: { createdAt, status: { in: paidStatuses } } },
+			where: { order: { ...orderWhere, status: { in: paidStatuses } } },
 			_sum: { quantity: true, payableAmount: true },
 			orderBy: { _sum: { quantity: 'desc' } },
 			take: query.limit,
@@ -51,10 +52,14 @@ export function csvCell(value) {
 	return `"${text.replaceAll('"', '""')}"`
 }
 
-export async function exportOrders(query) {
+export async function exportOrders(query, shopId) {
 	const { startDate, endDate } = dateRange(query)
 	const orders = await prisma.order.findMany({
-		where: { createdAt: { gte: startDate, lte: endDate }, ...(query.status ? { status: query.status } : {}) },
+		where: {
+			createdAt: { gte: startDate, lte: endDate },
+			...(shopId ? { shopId } : {}),
+			...(query.status ? { status: query.status } : {}),
+		},
 		include: { user: { select: { nickname: true, email: true, phone: true } }, address: true },
 		orderBy: { createdAt: 'desc' },
 		take: 10_001,

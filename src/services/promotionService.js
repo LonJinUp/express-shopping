@@ -3,8 +3,10 @@ import { prisma } from '../config/prisma.js'
 import { ERROR_CODES } from '../constants/errorCodes.js'
 import { AppError } from '../errors/AppError.js'
 
-async function defaultShopId(tx) {
-	const shop = await tx.shop.findUnique({ where: { code: 'DEFAULT' }, select: { id: true } })
+async function targetShopId(tx, shopId) {
+	const shop = shopId
+		? await tx.shop.findFirst({ where: { id: shopId, status: 'ACTIVE' }, select: { id: true } })
+		: await tx.shop.findUnique({ where: { code: 'DEFAULT' }, select: { id: true } })
 	if (!shop) throw new AppError('默认店铺尚未初始化')
 	return shop.id
 }
@@ -66,10 +68,42 @@ export function claimCoupon(userId, couponId) {
 	)
 }
 
-export function createCoupon(input) {
+export async function listManagedCoupons(query, shopId) {
+	const where = { shopId, ...(query.isActive === undefined ? {} : { isActive: query.isActive }) }
+	const [items, total] = await prisma.$transaction([
+		prisma.coupon.findMany({
+			where,
+			include: { products: true, categories: true },
+			orderBy: { createdAt: 'desc' },
+			skip: (query.page - 1) * query.pageSize,
+			take: query.pageSize,
+		}),
+		prisma.coupon.count({ where }),
+	])
+	return { items, pagination: { page: query.page, pageSize: query.pageSize, total } }
+}
+
+export function listShippingTemplates(shopId) {
+	return prisma.shippingTemplate.findMany({
+		where: { shopId },
+		include: { regionRules: true },
+		orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+	})
+}
+
+export function createCoupon(input, targetShop) {
 	return prisma.$transaction(async (tx) => {
-		const shopId = await defaultShopId(tx)
+		const shopId = await targetShopId(tx, targetShop)
 		const { productIds, categoryIds, ...data } = input
+		if (productIds.length) {
+			const productCount = await tx.product.count({ where: { id: { in: productIds }, shopId } })
+			if (productCount !== new Set(productIds).size) {
+				throw new AppError('优惠券包含不属于当前店铺的商品', {
+					statusCode: 422,
+					code: ERROR_CODES.VALIDATION_ERROR,
+				})
+			}
+		}
 		return tx.coupon.create({
 			data: {
 				...data,
@@ -82,9 +116,9 @@ export function createCoupon(input) {
 	})
 }
 
-export function createShippingTemplate(input) {
+export function createShippingTemplate(input, targetShop) {
 	return prisma.$transaction(async (tx) => {
-		const shopId = await defaultShopId(tx)
+		const shopId = await targetShopId(tx, targetShop)
 		if (input.isDefault) await tx.shippingTemplate.updateMany({ where: { shopId }, data: { isDefault: false } })
 		const { regionRules, ...data } = input
 		return tx.shippingTemplate.create({

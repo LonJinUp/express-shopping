@@ -69,6 +69,8 @@
 | POST | `/api/v1/cart/items/select` | 批量修改勾选状态             |
 | POST | `/api/v1/checkout/preview`  | 结算预览与计价               |
 
+结算商品可来自多个店铺，响应按 `shops` 分组并返回平台总金额。单店优惠券可继续传 `userCouponId`；跨店优惠券通过 `userCoupons: [{ shopId, userCouponId }]` 传递，每个店铺最多一张。
+
 ## 订单与支付
 
 以下接口均需要登录。
@@ -79,6 +81,8 @@
 | POST | `/api/v1/orders/create`           | 购物车或立即购买创建订单    |
 | GET  | `/api/v1/orders`                  | 订单列表、状态筛选和分页    |
 | GET  | `/api/v1/orders/detail`           | 订单详情，query 传 `id`     |
+| GET  | `/api/v1/platform-orders`         | 平台订单列表与分页          |
+| GET  | `/api/v1/platform-orders/detail`  | 平台订单及其子订单详情      |
 | POST | `/api/v1/orders/cancel`           | 取消订单，body 传 `id`      |
 | POST | `/api/v1/orders/confirm-receipt`  | 确认收货，body 传 `id`      |
 | POST | `/api/v1/payments/mock-pay`       | 模拟支付并正式扣减锁定库存  |
@@ -87,6 +91,8 @@
 | POST | `/api/v1/reviews/create`          | 评价已完成订单中的商品      |
 
 公开评价接口：`GET /api/v1/products/reviews`，query 传 `productId`。
+
+购物车下单会创建一个平台订单，并按店铺生成多个可独立支付、履约和售后的子订单；立即购买仍直接返回单个店铺订单。平台订单状态在子订单状态不一致时返回 `MIXED`。
 
 支付和退款回调需传递 `x-payment-timestamp` 和 `x-payment-signature`。签名内容为 `<timestamp>.<rawBody>`，使用 `PAYMENT_CALLBACK_SECRET` 计算 HMAC-SHA256 十六进制摘要。请求时间超过配置窗口将被拒绝；密钥轮换期间可临时配置 `PAYMENT_CALLBACK_PREVIOUS_SECRET`。
 
@@ -162,3 +168,49 @@
 退款金额由服务端按订单项实付金额和数量比例计算。未退完全部商品时不退运费；一次或分批退完全部商品时，在最后一笔退还运费。全额退款时，未过期优惠券恢复为可用，已过期则标记过期。
 
 创建渠道退款单后状态为 `PENDING`，渠道适配器应使用返回的 `refundNo`、`amount` 和 `channel` 发起退款。渠道回调失败后可调用重试接口，服务端保留原退款单并累计 `retryCount`。
+
+## 商户入驻与管理
+
+| 方法 | 路径                                         | 权限        | 参数位置 | 说明                                         |
+| ---- | -------------------------------------------- | ----------- | -------- | -------------------------------------------- |
+| POST | `/api/v1/merchant-applications/create`       | 登录用户    | body     | 提交商户入驻申请，`clientRequestId` 保证幂等 |
+| GET  | `/api/v1/merchant-applications/mine`         | 登录用户    | query    | 查询自己的入驻申请                           |
+| GET  | `/api/v1/merchant/shops`                     | 商户成员    | query    | 查询有权访问的商户与店铺                     |
+| POST | `/api/v1/merchant/shops/update`              | OWNER/ADMIN | body     | 修改所属店铺资料                             |
+| GET  | `/api/v1/admin/merchant-applications`        | ADMIN       | query    | 分页查询入驻申请                             |
+| POST | `/api/v1/admin/merchant-applications/review` | ADMIN       | body     | 通过或驳回入驻申请                           |
+
+商户商品和订单接口均要求传递 `shopId`。GET 请求放在 query，POST 请求放在 body；平台会校验当前用户是否属于该店铺。OWNER 和 ADMIN 可执行写操作，STAFF 仅可查询。
+
+| 方法 | 路径                                     | 权限        | 参数位置 | 说明                  |
+| ---- | ---------------------------------------- | ----------- | -------- | --------------------- |
+| GET  | `/api/v1/merchant/products`              | 商户成员    | query    | 当前店铺商品列表      |
+| GET  | `/api/v1/merchant/products/detail`       | 商户成员    | query    | 当前店铺商品详情      |
+| POST | `/api/v1/merchant/products/create`       | OWNER/ADMIN | body     | 创建商品及 SKU        |
+| POST | `/api/v1/merchant/products/update`       | OWNER/ADMIN | body     | 修改当前店铺商品      |
+| POST | `/api/v1/merchant/products/status`       | OWNER/ADMIN | body     | 修改商品状态          |
+| POST | `/api/v1/merchant/products/delete`       | OWNER/ADMIN | body     | 软删除商品            |
+| POST | `/api/v1/merchant/skus/create`           | OWNER/ADMIN | body     | 创建 SKU              |
+| POST | `/api/v1/merchant/skus/update`           | OWNER/ADMIN | body     | 修改 SKU              |
+| POST | `/api/v1/merchant/skus/inventory/adjust` | OWNER/ADMIN | body     | 调整当前店铺 SKU 库存 |
+| GET  | `/api/v1/merchant/orders`                | 商户成员    | query    | 当前店铺订单列表      |
+| GET  | `/api/v1/merchant/orders/detail`         | 商户成员    | query    | 当前店铺订单详情      |
+| POST | `/api/v1/merchant/orders/accept`         | OWNER/ADMIN | body     | 接单                  |
+| POST | `/api/v1/merchant/orders/ship`           | OWNER/ADMIN | body     | 发货                  |
+| POST | `/api/v1/merchant/orders/notes/create`   | OWNER/ADMIN | body     | 添加店铺内部订单备注  |
+
+| 方法 | 路径                                          | 权限        | 参数位置 | 说明                 |
+| ---- | --------------------------------------------- | ----------- | -------- | -------------------- |
+| GET  | `/api/v1/merchant/coupons`                    | 商户成员    | query    | 当前店铺优惠券列表   |
+| POST | `/api/v1/merchant/coupons/create`             | OWNER/ADMIN | body     | 创建店铺优惠券       |
+| GET  | `/api/v1/merchant/shipping-templates`         | 商户成员    | query    | 当前店铺运费模板     |
+| POST | `/api/v1/merchant/shipping-templates/create`  | OWNER/ADMIN | body     | 创建店铺运费模板     |
+| GET  | `/api/v1/merchant/after-sales`                | 商户成员    | query    | 当前店铺售后列表     |
+| GET  | `/api/v1/merchant/after-sales/detail`         | 商户成员    | query    | 当前店铺售后详情     |
+| POST | `/api/v1/merchant/after-sales/review`         | OWNER/ADMIN | body     | 审核售后             |
+| POST | `/api/v1/merchant/after-sales/confirm-return` | OWNER/ADMIN | body     | 确认收到退货         |
+| POST | `/api/v1/merchant/after-sales/refund`         | OWNER/ADMIN | body     | 创建渠道退款单       |
+| POST | `/api/v1/merchant/after-sales/retry-refund`   | OWNER/ADMIN | body     | 重试退款             |
+| POST | `/api/v1/merchant/after-sales/mock-refund`    | OWNER/ADMIN | body     | 开发环境模拟退款     |
+| GET  | `/api/v1/merchant/analytics/dashboard`        | 商户成员    | query    | 当前店铺经营看板     |
+| GET  | `/api/v1/merchant/orders/export`              | OWNER/ADMIN | query    | 导出当前店铺订单 CSV |

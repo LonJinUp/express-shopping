@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 const id = z.string().min(1).max(30)
+const shopCouponSchema = z.object({ shopId: id, userCouponId: id })
 
 export const createOrderSchema = z.discriminatedUnion('source', [
 	z.object({
@@ -8,6 +9,7 @@ export const createOrderSchema = z.discriminatedUnion('source', [
 		clientRequestId: z.string().min(8).max(64),
 		addressId: id,
 		userCouponId: id.optional(),
+		userCoupons: z.array(shopCouponSchema).max(100).optional(),
 		cartItemIds: z.array(id).min(1).max(200),
 		buyerMessage: z.string().trim().max(255).optional(),
 	}),
@@ -48,4 +50,9 @@ export const orderListSchema = z.object({
 			'REFUNDED',
 		])
 		.optional(),
+})
+
+export const platformOrderListSchema = z.object({
+	page: z.coerce.number().int().min(1).default(1),
+	pageSize: z.coerce.number().int().min(1).max(100).default(20),
 })

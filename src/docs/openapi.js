@@ -120,6 +120,179 @@ const paths = {
 	'/api/v1/addresses/delete': {
 		post: operation('删除收货地址', '用户', { auth: true, body: schema('IdInput') }),
 	},
+	'/api/v1/merchant-applications/create': {
+		post: operation('提交商户入驻申请', '商户入驻', { auth: true, body: schema('MerchantApplicationInput') }),
+	},
+	'/api/v1/merchant-applications/mine': {
+		get: operation('我的商户入驻申请', '商户入驻', { auth: true }),
+	},
+	'/api/v1/merchant/shops': {
+		get: operation('我的商户与店铺', '商户管理', { auth: true }),
+	},
+	'/api/v1/merchant/shops/update': {
+		post: operation('修改店铺资料', '商户管理', { auth: true, body: schema('ShopUpdateInput') }),
+	},
+	'/api/v1/merchant/products': {
+		get: operation('商户商品列表', '商户商品管理', {
+			auth: true,
+			parameters: [
+				queryParameter('shopId', id, '店铺 ID'),
+				...pagination,
+				queryParameter('keyword', { type: 'string', maxLength: 100 }, '关键词'),
+				queryParameter('status', { type: 'string', enum: ['DRAFT', 'ACTIVE', 'INACTIVE', 'DELETED'] }, '商品状态'),
+			],
+		}),
+	},
+	'/api/v1/merchant/products/detail': {
+		get: operation('商户商品详情', '商户商品管理', {
+			auth: true,
+			parameters: [queryParameter('shopId', id, '店铺 ID'), queryParameter('id', id, '商品 ID')],
+		}),
+	},
+	'/api/v1/merchant/products/create': {
+		post: operation('商户创建商品', '商户商品管理', { auth: true, body: schema('MerchantProductInput') }),
+	},
+	'/api/v1/merchant/products/update': {
+		post: operation('商户修改商品', '商户商品管理', { auth: true, body: schema('MerchantProductUpdateInput') }),
+	},
+	'/api/v1/merchant/products/status': {
+		post: operation('商户修改商品状态', '商户商品管理', {
+			auth: true,
+			body: schema('MerchantProductStatusInput'),
+		}),
+	},
+	'/api/v1/merchant/products/delete': {
+		post: operation('商户删除商品', '商户商品管理', { auth: true, body: schema('ShopScopedIdInput') }),
+	},
+	'/api/v1/merchant/skus/create': {
+		post: operation('商户创建 SKU', '商户商品管理', { auth: true, body: schema('MerchantSkuCreateInput') }),
+	},
+	'/api/v1/merchant/skus/update': {
+		post: operation('商户修改 SKU', '商户商品管理', { auth: true, body: schema('MerchantSkuUpdateInput') }),
+	},
+	'/api/v1/merchant/skus/inventory/adjust': {
+		post: operation('商户调整库存', '商户商品管理', {
+			auth: true,
+			body: schema('MerchantInventoryAdjustInput'),
+		}),
+	},
+	'/api/v1/merchant/orders': {
+		get: operation('商户订单列表', '商户订单管理', {
+			auth: true,
+			parameters: [
+				queryParameter('shopId', id, '店铺 ID'),
+				...pagination,
+				queryParameter('status', { type: 'string', enum: orderStatuses.slice(0, 6) }, '订单状态'),
+				queryParameter('orderNo', { type: 'string', maxLength: 32 }, '订单号'),
+			],
+		}),
+	},
+	'/api/v1/merchant/orders/detail': {
+		get: operation('商户订单详情', '商户订单管理', {
+			auth: true,
+			parameters: [queryParameter('shopId', id, '店铺 ID'), queryParameter('id', id, '订单 ID')],
+		}),
+	},
+	'/api/v1/merchant/orders/accept': {
+		post: operation('商户接单', '商户订单管理', { auth: true, body: schema('ShopScopedIdInput') }),
+	},
+	'/api/v1/merchant/orders/ship': {
+		post: operation('商户订单发货', '商户订单管理', { auth: true, body: schema('MerchantShipmentInput') }),
+	},
+	'/api/v1/merchant/orders/notes/create': {
+		post: operation('商户添加订单备注', '商户订单管理', {
+			auth: true,
+			body: schema('MerchantOrderNoteInput'),
+		}),
+	},
+	'/api/v1/merchant/coupons': {
+		get: operation('商户优惠券列表', '商户营销管理', {
+			auth: true,
+			parameters: [
+				queryParameter('shopId', id, '店铺 ID'),
+				...pagination,
+				queryParameter('isActive', { type: 'boolean' }, '是否启用'),
+			],
+		}),
+	},
+	'/api/v1/merchant/coupons/create': {
+		post: operation('商户创建优惠券', '商户营销管理', { auth: true, body: schema('MerchantCouponInput') }),
+	},
+	'/api/v1/merchant/shipping-templates': {
+		get: operation('商户运费模板列表', '商户营销管理', {
+			auth: true,
+			parameters: [queryParameter('shopId', id, '店铺 ID')],
+		}),
+	},
+	'/api/v1/merchant/shipping-templates/create': {
+		post: operation('商户创建运费模板', '商户营销管理', {
+			auth: true,
+			body: schema('MerchantShippingTemplateInput'),
+		}),
+	},
+	'/api/v1/merchant/after-sales': {
+		get: operation('商户售后列表', '商户售后管理', {
+			auth: true,
+			parameters: [
+				queryParameter('shopId', id, '店铺 ID'),
+				...pagination,
+				queryParameter('status', { type: 'string', enum: afterSaleStatuses }, '售后状态'),
+			],
+		}),
+	},
+	'/api/v1/merchant/after-sales/detail': {
+		get: operation('商户售后详情', '商户售后管理', {
+			auth: true,
+			parameters: [queryParameter('shopId', id, '店铺 ID'), queryParameter('id', id, '售后单 ID')],
+		}),
+	},
+	'/api/v1/merchant/after-sales/review': {
+		post: operation('商户审核售后', '商户售后管理', {
+			auth: true,
+			body: schema('MerchantAfterSaleReviewInput'),
+		}),
+	},
+	'/api/v1/merchant/after-sales/confirm-return': {
+		post: operation('商户确认退货', '商户售后管理', { auth: true, body: schema('ShopScopedIdInput') }),
+	},
+	'/api/v1/merchant/after-sales/refund': {
+		post: operation('商户创建退款单', '商户售后管理', {
+			auth: true,
+			body: schema('MerchantChannelRefundInput'),
+		}),
+	},
+	'/api/v1/merchant/after-sales/retry-refund': {
+		post: operation('商户重试退款', '商户售后管理', { auth: true, body: schema('ShopScopedIdInput') }),
+	},
+	'/api/v1/merchant/after-sales/mock-refund': {
+		post: operation('商户模拟退款', '商户售后管理', {
+			auth: true,
+			body: schema('MerchantAfterSaleMockRefundInput'),
+		}),
+	},
+	'/api/v1/merchant/analytics/dashboard': {
+		get: operation('商户经营看板', '商户经营分析', {
+			auth: true,
+			parameters: [
+				queryParameter('shopId', id, '店铺 ID'),
+				queryParameter('startDate', dateTime, '开始时间'),
+				queryParameter('endDate', dateTime, '结束时间'),
+				queryParameter('limit', { type: 'integer', minimum: 1, maximum: 100, default: 10 }, '热销商品数量'),
+			],
+		}),
+	},
+	'/api/v1/merchant/orders/export': {
+		get: operation('商户导出订单 CSV', '商户经营分析', {
+			auth: true,
+			parameters: [
+				queryParameter('shopId', id, '店铺 ID'),
+				queryParameter('startDate', dateTime, '开始时间'),
+				queryParameter('endDate', dateTime, '结束时间'),
+				queryParameter('status', { type: 'string', enum: orderStatuses.slice(0, 6) }, '订单状态'),
+			],
+			responses: { 200: { description: 'UTF-8 BOM CSV', content: { 'text/csv': { schema: { type: 'string' } } } } },
+		}),
+	},
 
 	'/api/v1/categories': { get: operation('分类列表', '商品') },
 	'/api/v1/brands': { get: operation('品牌列表', '商品') },
@@ -177,6 +350,12 @@ const paths = {
 	},
 	'/api/v1/orders/detail': {
 		get: operation('订单详情', '订单', { auth: true, parameters: [queryParameter('id', id, '订单 ID')] }),
+	},
+	'/api/v1/platform-orders': {
+		get: operation('我的平台订单', '订单', { auth: true, parameters: pagination }),
+	},
+	'/api/v1/platform-orders/detail': {
+		get: operation('平台订单详情', '订单', { auth: true, parameters: [queryParameter('id', id, '平台订单 ID')] }),
 	},
 	'/api/v1/orders/cancel': {
 		post: operation('取消待支付订单', '订单', { auth: true, body: schema('CancelOrderInput') }),
@@ -256,6 +435,21 @@ const paths = {
 
 	'/api/v1/admin/categories/create': {
 		post: operation('创建分类', '商品管理', { admin: true, body: schema('CategoryInput') }),
+	},
+	'/api/v1/admin/merchant-applications': {
+		get: operation('入驻申请列表', '平台商户管理', {
+			admin: true,
+			parameters: [
+				...pagination,
+				queryParameter('status', { type: 'string', enum: ['PENDING', 'APPROVED', 'REJECTED'] }, '审核状态'),
+			],
+		}),
+	},
+	'/api/v1/admin/merchant-applications/review': {
+		post: operation('审核商户入驻申请', '平台商户管理', {
+			admin: true,
+			body: schema('MerchantApplicationReviewInput'),
+		}),
 	},
 	'/api/v1/admin/categories/update': {
 		post: operation('修改分类', '商品管理', {
@@ -477,7 +671,8 @@ export const openapiDocument = {
 	info: {
 		title: 'Express Shop API',
 		version: '0.1.0',
-		description: '单商户商城 HTTP API。金额均使用整数最小货币单位（人民币：分）；写操作统一使用 POST。',
+		description:
+			'支持单商户并逐步升级多商户的商城 HTTP API。金额均使用整数最小货币单位（人民币：分）；写操作统一使用 POST。',
 	},
 	servers: [{ url: '/', description: '当前服务' }],
 	tags: [
@@ -492,6 +687,14 @@ export const openapiDocument = {
 		{ name: '营销' },
 		{ name: '用户互动' },
 		{ name: '售后' },
+		{ name: '商户入驻' },
+		{ name: '商户管理' },
+		{ name: '商户商品管理' },
+		{ name: '商户订单管理' },
+		{ name: '商户营销管理' },
+		{ name: '商户售后管理' },
+		{ name: '商户经营分析' },
+		{ name: '平台商户管理' },
 		{ name: '商品管理' },
 		{ name: '订单管理' },
 		{ name: '运营管理' },
@@ -503,6 +706,69 @@ export const openapiDocument = {
 			bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', description: '登录返回的 accessToken' },
 		},
 		schemas: {
+			ShopScopeInput: {
+				type: 'object',
+				required: ['shopId'],
+				properties: { shopId: id },
+			},
+			ShopScopedIdInput: { allOf: [schema('ShopScopeInput'), schema('IdInput')] },
+			MerchantProductInput: { allOf: [schema('ShopScopeInput'), schema('ProductInput')] },
+			MerchantProductUpdateInput: { allOf: [schema('ShopScopeInput'), schema('ProductUpdateInput')] },
+			MerchantProductStatusInput: { allOf: [schema('ShopScopeInput'), schema('ProductStatusInput')] },
+			MerchantSkuCreateInput: { allOf: [schema('ShopScopeInput'), schema('SkuCreateInput')] },
+			MerchantSkuUpdateInput: { allOf: [schema('ShopScopeInput'), schema('SkuUpdateInput')] },
+			MerchantInventoryAdjustInput: { allOf: [schema('ShopScopeInput'), schema('InventoryAdjustInput')] },
+			MerchantShipmentInput: { allOf: [schema('ShopScopeInput'), schema('ShipmentInput')] },
+			MerchantOrderNoteInput: { allOf: [schema('ShopScopeInput'), schema('OrderNoteInput')] },
+			MerchantCouponInput: { allOf: [schema('ShopScopeInput'), schema('CouponInput')] },
+			MerchantShippingTemplateInput: { allOf: [schema('ShopScopeInput'), schema('ShippingTemplateInput')] },
+			MerchantAfterSaleReviewInput: { allOf: [schema('ShopScopeInput'), schema('AfterSaleReviewInput')] },
+			MerchantChannelRefundInput: { allOf: [schema('ShopScopeInput'), schema('ChannelRefundInput')] },
+			MerchantAfterSaleMockRefundInput: {
+				allOf: [schema('ShopScopeInput'), schema('AfterSaleMockRefundInput')],
+			},
+			MerchantApplicationInput: {
+				type: 'object',
+				required: [
+					'clientRequestId',
+					'merchantName',
+					'merchantCode',
+					'shopName',
+					'shopCode',
+					'contactName',
+					'contactPhone',
+				],
+				properties: {
+					clientRequestId: { type: 'string', minLength: 8, maxLength: 64 },
+					merchantName: { type: 'string', minLength: 2, maxLength: 120 },
+					merchantCode: { type: 'string', minLength: 2, maxLength: 50, pattern: '^[A-Z0-9_-]+$' },
+					shopName: { type: 'string', minLength: 2, maxLength: 120 },
+					shopCode: { type: 'string', minLength: 2, maxLength: 50, pattern: '^[A-Z0-9_-]+$' },
+					contactName: { type: 'string', minLength: 2, maxLength: 80 },
+					contactPhone: { type: 'string', minLength: 6, maxLength: 30 },
+					qualificationUrl: { type: ['string', 'null'], format: 'uri', maxLength: 500 },
+				},
+			},
+			MerchantApplicationReviewInput: {
+				type: 'object',
+				required: ['id', 'action'],
+				properties: {
+					id,
+					action: { type: 'string', enum: ['APPROVE', 'REJECT'] },
+					reason: { type: 'string', minLength: 2, maxLength: 500 },
+				},
+			},
+			ShopUpdateInput: {
+				type: 'object',
+				required: ['id'],
+				minProperties: 2,
+				properties: {
+					id,
+					name: { type: 'string', minLength: 2, maxLength: 120 },
+					description: { type: ['string', 'null'], maxLength: 500 },
+					logoUrl: { type: ['string', 'null'], format: 'uri', maxLength: 500 },
+				},
+			},
 			SuccessResponse: {
 				type: 'object',
 				required: ['code', 'message', 'data', 'requestId'],
@@ -596,6 +862,11 @@ export const openapiDocument = {
 				required: ['itemIds', 'selected'],
 				properties: { itemIds: { type: 'array', maxItems: 200, items: id }, selected: { type: 'boolean' } },
 			},
+			ShopCouponInput: {
+				type: 'object',
+				required: ['shopId', 'userCouponId'],
+				properties: { shopId: id, userCouponId: id },
+			},
 			CheckoutPreviewInput: {
 				type: 'object',
 				required: ['addressId'],
@@ -603,7 +874,9 @@ export const openapiDocument = {
 					addressId: id,
 					itemIds: { type: 'array', minItems: 1, maxItems: 200, items: id },
 					userCouponId: id,
+					userCoupons: { type: 'array', maxItems: 100, items: schema('ShopCouponInput') },
 				},
+				description: '单店可继续传 userCouponId；跨店时通过 userCoupons 为每个店铺选择一张优惠券。',
 			},
 			DirectPreviewInput: {
 				type: 'object',
@@ -625,6 +898,7 @@ export const openapiDocument = {
 							clientRequestId: { type: 'string', minLength: 8, maxLength: 64 },
 							addressId: id,
 							userCouponId: id,
+							userCoupons: { type: 'array', maxItems: 100, items: schema('ShopCouponInput') },
 							cartItemIds: { type: 'array', minItems: 1, maxItems: 200, items: id },
 							buyerMessage: { type: 'string', maxLength: 255 },
 						},

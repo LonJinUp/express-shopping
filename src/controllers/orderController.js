@@ -18,6 +18,14 @@ export async function getOrder(req, res) {
 	return res.success(await service.getOrder(req.user.id, req.query.id))
 }
 
+export async function listPlatformOrders(req, res) {
+	return res.success(await service.listPlatformOrders(req.user.id, req.query))
+}
+
+export async function getPlatformOrder(req, res) {
+	return res.success(await service.getPlatformOrder(req.user.id, req.query.id))
+}
+
 export async function cancelOrder(req, res) {
 	return res.success(await service.cancelOrder(req.user.id, req.body.id, req.body.reason), '订单已取消')
 }

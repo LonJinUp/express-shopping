@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client'
+import { createHash } from 'node:crypto'
 import { env } from '../config/env.js'
 import { prisma } from '../config/prisma.js'
 import { ERROR_CODES } from '../constants/errorCodes.js'
@@ -15,6 +16,13 @@ const orderDetailInclude = {
 	userCoupon: { include: { coupon: true } },
 }
 
+const platformOrderDetailInclude = {
+	orders: {
+		orderBy: { createdAt: 'asc' },
+		include: { ...orderDetailInclude, shop: { select: { id: true, name: true, code: true } } },
+	},
+}
+
 function invalidOrderItem(message = '商品已失效或库存不足') {
 	return new AppError(message, { statusCode: 422, code: ERROR_CODES.VALIDATION_ERROR })
 }
@@ -24,7 +32,16 @@ async function loadPurchaseItems(tx, userId, input) {
 		const cartItems = await tx.cartItem.findMany({
 			where: { id: { in: input.cartItemIds }, userId, selected: true },
 			include: {
-				sku: { include: { product: { include: { images: { take: 1, orderBy: { sortOrder: 'asc' } } } } } },
+				sku: {
+					include: {
+						product: {
+							include: {
+								images: { take: 1, orderBy: { sortOrder: 'asc' } },
+								shop: { select: { status: true } },
+							},
+						},
+					},
+				},
 			},
 		})
 		if (cartItems.length !== new Set(input.cartItemIds).size) throw invalidOrderItem('部分购物车商品不存在或未勾选')
@@ -33,7 +50,14 @@ async function loadPurchaseItems(tx, userId, input) {
 
 	const sku = await tx.productSku.findUnique({
 		where: { id: input.skuId },
-		include: { product: { include: { images: { take: 1, orderBy: { sortOrder: 'asc' } } } } },
+		include: {
+			product: {
+				include: {
+					images: { take: 1, orderBy: { sortOrder: 'asc' } },
+					shop: { select: { status: true } },
+				},
+			},
+		},
 	})
 	if (!sku) throw invalidOrderItem('SKU 不存在')
 	return [{ quantity: input.quantity, sku }]
@@ -50,9 +74,50 @@ function validateSingleShop(items) {
 	return items[0].sku.product.shopId
 }
 
+function couponIdsByShop(input, shopIds) {
+	if (input.userCouponId && input.userCoupons?.length) {
+		throw new AppError('userCouponId 和 userCoupons 不能同时传入', {
+			statusCode: 422,
+			code: ERROR_CODES.VALIDATION_ERROR,
+		})
+	}
+	if (input.userCouponId) {
+		if (shopIds.size !== 1) {
+			throw new AppError('跨店下单请通过 userCoupons 分店铺选择优惠券', {
+				statusCode: 422,
+				code: ERROR_CODES.VALIDATION_ERROR,
+			})
+		}
+		return new Map([[shopIds.values().next().value, input.userCouponId]])
+	}
+	const couponMap = new Map()
+	for (const coupon of input.userCoupons ?? []) {
+		if (!shopIds.has(coupon.shopId)) {
+			throw new AppError('优惠券对应店铺不在本次下单范围内', {
+				statusCode: 422,
+				code: ERROR_CODES.VALIDATION_ERROR,
+			})
+		}
+		if (couponMap.has(coupon.shopId)) {
+			throw new AppError('同一店铺只能选择一张优惠券', {
+				statusCode: 422,
+				code: ERROR_CODES.VALIDATION_ERROR,
+			})
+		}
+		couponMap.set(coupon.shopId, coupon.userCouponId)
+	}
+	return couponMap
+}
+
+function childClientRequestId(clientRequestId, shopId) {
+	return `P:${createHash('sha256').update(`${clientRequestId}:${shopId}`).digest('hex').slice(0, 62)}`
+}
+
 function buildOrderItems(items) {
 	return items.map(({ sku, quantity }) => {
-		if (!sku.isActive || sku.product.status !== 'ACTIVE') throw invalidOrderItem()
+		if (!sku.isActive || sku.product.status !== 'ACTIVE' || sku.product.shop.status !== 'ACTIVE') {
+			throw invalidOrderItem()
+		}
 		const goodsAmount = sku.price * quantity
 		return {
 			skuId: sku.id,
@@ -96,6 +161,120 @@ async function lockInventory(tx, items, orderId, userId) {
 	}
 }
 
+async function createCartOrders(userId, input) {
+	const existing = await prisma.platformOrder.findUnique({
+		where: { userId_clientRequestId: { userId, clientRequestId: input.clientRequestId } },
+		include: platformOrderDetailInclude,
+	})
+	if (existing) return { order: existing, duplicated: true }
+
+	try {
+		const platformOrder = await prisma.$transaction(
+			async (tx) => {
+				const address = await tx.userAddress.findFirst({ where: { id: input.addressId, userId } })
+				if (!address) throw new AppError('收货地址不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
+
+				const purchaseItems = await loadPurchaseItems(tx, userId, input)
+				const shopIds = new Set(purchaseItems.map((item) => item.sku.product.shopId))
+				const couponMap = couponIdsByShop(input, shopIds)
+				const groups = []
+				for (const shopId of [...shopIds].sort()) {
+					const items = purchaseItems.filter((item) => item.sku.product.shopId === shopId)
+					const orderItems = buildOrderItems(items)
+					const pricing = await calculatePricing(tx, {
+						userId,
+						shopId,
+						address,
+						items,
+						orderItems,
+						userCouponId: couponMap.get(shopId),
+					})
+					groups.push({ shopId, items, orderItems, pricing })
+				}
+
+				const createdPlatformOrder = await tx.platformOrder.create({
+					data: {
+						platformOrderNo: createOrderNo(),
+						clientRequestId: input.clientRequestId,
+						userId,
+						goodsAmount: groups.reduce((sum, group) => sum + group.pricing.goodsAmount, 0),
+						discountAmount: groups.reduce((sum, group) => sum + group.pricing.discountAmount, 0),
+						shippingAmount: groups.reduce((sum, group) => sum + group.pricing.shippingAmount, 0),
+						payableAmount: groups.reduce((sum, group) => sum + group.pricing.payableAmount, 0),
+					},
+				})
+				const expiresAt = new Date(Date.now() + env.ORDER_PAYMENT_EXPIRES_MINUTES * 60 * 1000)
+
+				for (const group of groups) {
+					if (group.pricing.userCoupon) {
+						const used = await tx.userCoupon.updateMany({
+							where: { id: group.pricing.userCoupon.id, userId, status: 'AVAILABLE' },
+							data: { status: 'USED', usedAt: new Date() },
+						})
+						if (!used.count) throw new AppError('优惠券已被使用', { statusCode: 409, code: ERROR_CODES.CONFLICT })
+					}
+
+					const created = await tx.order.create({
+						data: {
+							orderNo: createOrderNo(),
+							clientRequestId: childClientRequestId(input.clientRequestId, group.shopId),
+							userId,
+							shopId: group.shopId,
+							platformOrderId: createdPlatformOrder.id,
+							goodsAmount: group.pricing.goodsAmount,
+							discountAmount: group.pricing.discountAmount,
+							shippingAmount: group.pricing.shippingAmount,
+							payableAmount: group.pricing.payableAmount,
+							userCouponId: group.pricing.userCoupon?.id,
+							couponCode: group.pricing.userCoupon?.coupon.code,
+							buyerMessage: input.buyerMessage,
+							expiresAt,
+							address: {
+								create: {
+									recipientName: address.recipientName,
+									phone: address.phone,
+									province: address.province,
+									city: address.city,
+									district: address.district,
+									detail: address.detail,
+									postalCode: address.postalCode,
+								},
+							},
+							items: { create: group.orderItems },
+							logs: {
+								create: {
+									toStatus: 'PENDING_PAYMENT',
+									action: 'CREATE',
+									operatorId: userId,
+									remark: '平台订单按店铺拆单',
+								},
+							},
+						},
+					})
+					await lockInventory(tx, group.items, created.id, userId)
+				}
+
+				await tx.cartItem.deleteMany({ where: { userId, id: { in: input.cartItemIds } } })
+				return tx.platformOrder.findUnique({
+					where: { id: createdPlatformOrder.id },
+					include: platformOrderDetailInclude,
+				})
+			},
+			{ isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+		)
+		return { order: platformOrder, duplicated: false }
+	} catch (error) {
+		if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+			const platformOrder = await prisma.platformOrder.findUnique({
+				where: { userId_clientRequestId: { userId, clientRequestId: input.clientRequestId } },
+				include: platformOrderDetailInclude,
+			})
+			if (platformOrder) return { order: platformOrder, duplicated: true }
+		}
+		throw error
+	}
+}
+
 export async function directPreview(userId, input) {
 	const address = await prisma.userAddress.findFirst({ where: { id: input.addressId, userId } })
 	if (!address) throw new AppError('收货地址不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
@@ -133,6 +312,8 @@ export async function directPreview(userId, input) {
 }
 
 export async function createOrder(userId, input) {
+	if (input.source === 'CART') return createCartOrders(userId, input)
+
 	const existing = await prisma.order.findUnique({
 		where: { userId_clientRequestId: { userId, clientRequestId: input.clientRequestId } },
 		include: orderDetailInclude,
@@ -241,6 +422,52 @@ export async function getOrder(userId, orderId) {
 	const order = await prisma.order.findFirst({ where: { id: orderId, userId }, include: orderDetailInclude })
 	if (!order) throw new AppError('订单不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
 	return order
+}
+
+function serializePlatformOrder(platformOrder) {
+	const statuses = new Set(platformOrder.orders.map((order) => order.status))
+	return {
+		...platformOrder,
+		status: statuses.size === 1 ? statuses.values().next().value : 'MIXED',
+		paidAmount: platformOrder.orders.reduce((sum, order) => sum + order.paidAmount, 0),
+		refundedAmount: platformOrder.orders.reduce((sum, order) => sum + order.refundedAmount, 0),
+	}
+}
+
+export async function listPlatformOrders(userId, query) {
+	const where = { userId }
+	const skip = (query.page - 1) * query.pageSize
+	const [total, items] = await prisma.$transaction([
+		prisma.platformOrder.count({ where }),
+		prisma.platformOrder.findMany({
+			where,
+			skip,
+			take: query.pageSize,
+			orderBy: { createdAt: 'desc' },
+			include: {
+				orders: {
+					orderBy: { createdAt: 'asc' },
+					include: {
+						items: true,
+						shop: { select: { id: true, name: true, code: true } },
+					},
+				},
+			},
+		}),
+	])
+	return {
+		items: items.map(serializePlatformOrder),
+		pagination: { page: query.page, pageSize: query.pageSize, total, totalPages: Math.ceil(total / query.pageSize) },
+	}
+}
+
+export async function getPlatformOrder(userId, platformOrderId) {
+	const platformOrder = await prisma.platformOrder.findFirst({
+		where: { id: platformOrderId, userId },
+		include: platformOrderDetailInclude,
+	})
+	if (!platformOrder) throw new AppError('平台订单不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
+	return serializePlatformOrder(platformOrder)
 }
 
 export async function cancelOrder(userId, orderId, reason = '用户主动取消') {

@@ -71,9 +71,12 @@ export async function closeExpiredOrders(limit = 100) {
 	return results.filter((result) => result.status === 'fulfilled' && result.value).length
 }
 
-export async function acceptOrder(orderId, operatorId) {
+export async function acceptOrder(orderId, operatorId, shopId) {
 	return prisma.$transaction(async (tx) => {
-		const result = await tx.order.updateMany({ where: { id: orderId, status: 'PAID' }, data: { status: 'PROCESSING' } })
+		const result = await tx.order.updateMany({
+			where: { id: orderId, status: 'PAID', ...(shopId ? { shopId } : {}) },
+			data: { status: 'PROCESSING' },
+		})
 		if (!result.count)
 			throw new AppError('订单不存在或当前状态不能接单', { statusCode: 409, code: ERROR_CODES.CONFLICT })
 		await tx.orderLog.create({
@@ -83,10 +86,10 @@ export async function acceptOrder(orderId, operatorId) {
 	})
 }
 
-export async function shipOrder(orderId, input, operatorId) {
+export async function shipOrder(orderId, input, operatorId, shopId) {
 	return prisma.$transaction(async (tx) => {
 		const changed = await tx.order.updateMany({
-			where: { id: orderId, status: 'PROCESSING' },
+			where: { id: orderId, status: 'PROCESSING', ...(shopId ? { shopId } : {}) },
 			data: { status: 'SHIPPED', shippedAt: new Date() },
 		})
 		if (!changed.count)

@@ -10,6 +10,8 @@ import { promotionRouter } from './promotionRoutes.js'
 import { operationsRouter } from './operationsRoutes.js'
 import { userRouter } from './userRoutes.js'
 import { afterSaleRouter, refundCallbackRouter } from './afterSaleRoutes.js'
+import { merchantRouter } from './merchantRoutes.js'
+import { merchantCommerceRouter } from './merchantCommerceRoutes.js'
 
 export const apiRouter = Router()
 
@@ -29,4 +31,6 @@ apiRouter.use(promotionRouter)
 apiRouter.use(operationsRouter)
 apiRouter.use(userRouter)
 apiRouter.use(afterSaleRouter)
+apiRouter.use(merchantRouter)
+apiRouter.use('/merchant', merchantCommerceRouter)
 apiRouter.use('/admin', adminRouter)

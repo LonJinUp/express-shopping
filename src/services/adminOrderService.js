@@ -11,8 +11,9 @@ const detailInclude = {
 	shipment: true,
 }
 
-export async function listOrders(query) {
+export async function listOrders(query, shopId) {
 	const where = {
+		...(shopId ? { shopId } : {}),
 		...(query.status ? { status: query.status } : {}),
 		...(query.orderNo ? { orderNo: query.orderNo } : {}),
 	}
@@ -33,14 +34,20 @@ export async function listOrders(query) {
 	}
 }
 
-export async function getOrder(orderId) {
-	const order = await prisma.order.findUnique({ where: { id: orderId }, include: detailInclude })
+export async function getOrder(orderId, shopId) {
+	const order = await prisma.order.findFirst({
+		where: { id: orderId, ...(shopId ? { shopId } : {}) },
+		include: detailInclude,
+	})
 	if (!order) throw new AppError('订单不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
 	return order
 }
 
-export async function addNote(orderId, operatorId, content) {
-	const order = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true } })
+export async function addNote(orderId, operatorId, content, shopId) {
+	const order = await prisma.order.findFirst({
+		where: { id: orderId, ...(shopId ? { shopId } : {}) },
+		select: { id: true },
+	})
 	if (!order) throw new AppError('订单不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
 	return prisma.orderNote.create({ data: { orderId, operatorId, content } })
 }

@@ -31,6 +31,11 @@ async function main() {
 		update: { name: '管理员' },
 		create: { code: 'ADMIN', name: '管理员' },
 	})
+	await prisma.role.upsert({
+		where: { code: 'MERCHANT' },
+		update: { name: '商户成员' },
+		create: { code: 'MERCHANT', name: '商户成员' },
+	})
 
 	for (const [code, name] of permissions) {
 		const permission = await prisma.permission.upsert({ where: { code }, update: { name }, create: { code, name } })

@@ -5,7 +5,9 @@ import {
 	createOrder,
 	directPreview,
 	getOrder,
+	getPlatformOrder,
 	listOrders,
+	listPlatformOrders,
 } from '../controllers/orderController.js'
 import { authenticate } from '../middlewares/auth.js'
 import { validate } from '../middlewares/validate.js'
@@ -15,6 +17,7 @@ import {
 	directPreviewSchema,
 	orderIdSchema,
 	orderListSchema,
+	platformOrderListSchema,
 } from '../validators/orderValidator.js'
 
 export const orderRouter = Router()
@@ -22,5 +25,7 @@ orderRouter.post('/checkout/direct-preview', authenticate, validate(directPrevie
 orderRouter.post('/orders/create', authenticate, validate(createOrderSchema), createOrder)
 orderRouter.get('/orders', authenticate, validate(orderListSchema, 'query'), listOrders)
 orderRouter.get('/orders/detail', authenticate, validate(orderIdSchema, 'query'), getOrder)
+orderRouter.get('/platform-orders', authenticate, validate(platformOrderListSchema, 'query'), listPlatformOrders)
+orderRouter.get('/platform-orders/detail', authenticate, validate(orderIdSchema, 'query'), getPlatformOrder)
 orderRouter.post('/orders/cancel', authenticate, validate(cancelOrderSchema), cancelOrder)
 orderRouter.post('/orders/confirm-receipt', authenticate, validate(orderIdSchema), confirmReceipt)

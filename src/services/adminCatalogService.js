@@ -11,8 +11,10 @@ async function assertCategoryAndBrand(tx, categoryId, brandId) {
 	if (!brand) throw new AppError('商品品牌不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
 }
 
-async function getDefaultShop(tx) {
-	const shop = await tx.shop.findUnique({ where: { code: 'DEFAULT' }, select: { id: true } })
+async function getTargetShop(tx, shopId) {
+	const shop = shopId
+		? await tx.shop.findFirst({ where: { id: shopId, status: 'ACTIVE' }, select: { id: true } })
+		: await tx.shop.findUnique({ where: { code: 'DEFAULT' }, select: { id: true } })
 	if (!shop) throw new AppError('默认店铺尚未初始化')
 	return shop
 }
@@ -40,8 +42,9 @@ export async function updateBrand(brandId, input) {
 	return prisma.brand.update({ where: { id: brandId }, data: input })
 }
 
-export async function listProducts(query) {
+export async function listProducts(query, shopId) {
 	const where = {
+		...(shopId ? { shopId } : {}),
 		...(query.keyword ? { name: { contains: query.keyword } } : {}),
 		...(query.status ? { status: query.status } : { status: { not: 'DELETED' } }),
 	}
@@ -66,9 +69,9 @@ export async function listProducts(query) {
 	}
 }
 
-export async function getProduct(productId) {
-	const product = await prisma.product.findUnique({
-		where: { id: productId },
+export async function getProduct(productId, shopId) {
+	const product = await prisma.product.findFirst({
+		where: { id: productId, ...(shopId ? { shopId } : {}) },
 		include: {
 			category: true,
 			brand: true,
@@ -80,10 +83,10 @@ export async function getProduct(productId) {
 	return product
 }
 
-export function createProduct(input, operatorId) {
+export function createProduct(input, operatorId, shopId) {
 	return prisma.$transaction(async (tx) => {
 		await assertCategoryAndBrand(tx, input.categoryId, input.brandId)
-		const shop = await getDefaultShop(tx)
+		const shop = await getTargetShop(tx, shopId)
 		const { images, skus, ...productData } = input
 		return tx.product.create({
 			data: {
@@ -115,10 +118,10 @@ export function createProduct(input, operatorId) {
 	})
 }
 
-export function updateProduct(productId, input) {
+export function updateProduct(productId, input, shopId) {
 	return prisma.$transaction(async (tx) => {
-		const product = await tx.product.findUnique({
-			where: { id: productId },
+		const product = await tx.product.findFirst({
+			where: { id: productId, ...(shopId ? { shopId } : {}) },
 			select: { id: true, categoryId: true, brandId: true },
 		})
 		if (!product) throw new AppError('商品不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
@@ -139,9 +142,9 @@ export function updateProduct(productId, input) {
 	})
 }
 
-export async function changeProductStatus(productId, status) {
-	const product = await prisma.product.findUnique({
-		where: { id: productId },
+export async function changeProductStatus(productId, status, shopId) {
+	const product = await prisma.product.findFirst({
+		where: { id: productId, ...(shopId ? { shopId } : {}) },
 		include: { skus: { where: { isActive: true }, include: { inventory: true } } },
 	})
 	if (!product || product.status === 'DELETED') {
@@ -153,18 +156,18 @@ export async function changeProductStatus(productId, status) {
 	return prisma.product.update({ where: { id: productId }, data: { status } })
 }
 
-export async function deleteProduct(productId) {
+export async function deleteProduct(productId, shopId) {
 	const result = await prisma.product.updateMany({
-		where: { id: productId, status: { not: 'DELETED' } },
+		where: { id: productId, status: { not: 'DELETED' }, ...(shopId ? { shopId } : {}) },
 		data: { status: 'DELETED' },
 	})
 	if (!result.count) throw new AppError('商品不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
 }
 
-export function createSku(productId, input, operatorId) {
+export function createSku(productId, input, operatorId, shopId) {
 	return prisma.$transaction(async (tx) => {
 		const product = await tx.product.findFirst({
-			where: { id: productId, status: { not: 'DELETED' } },
+			where: { id: productId, status: { not: 'DELETED' }, ...(shopId ? { shopId } : {}) },
 			select: { id: true },
 		})
 		if (!product) throw new AppError('商品不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
@@ -193,15 +196,20 @@ export function createSku(productId, input, operatorId) {
 	})
 }
 
-export async function updateSku(skuId, input) {
-	const exists = await prisma.productSku.findUnique({ where: { id: skuId }, select: { id: true } })
+export async function updateSku(skuId, input, shopId) {
+	const exists = await prisma.productSku.findFirst({
+		where: { id: skuId, ...(shopId ? { product: { shopId } } : {}) },
+		select: { id: true },
+	})
 	if (!exists) throw new AppError('SKU 不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
 	return prisma.productSku.update({ where: { id: skuId }, data: input, include: { inventory: true } })
 }
 
-export function adjustInventory(skuId, difference, remark, operatorId) {
+export function adjustInventory(skuId, difference, remark, operatorId, shopId) {
 	return prisma.$transaction(async (tx) => {
-		const inventory = await tx.inventory.findUnique({ where: { skuId } })
+		const inventory = await tx.inventory.findFirst({
+			where: { skuId, ...(shopId ? { sku: { product: { shopId } } } : {}) },
+		})
 		if (!inventory) throw new AppError('SKU 库存不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
 		if (inventory.available + difference < 0) {
 			throw new AppError('可用库存不足，不能调整为负数', { statusCode: 422, code: ERROR_CODES.VALIDATION_ERROR })

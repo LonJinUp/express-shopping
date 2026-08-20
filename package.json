@@ -1,7 +1,7 @@
 {
 	"name": "express-shop",
 	"version": "0.1.0",
-	"description": "基于 Express、MySQL 和 Prisma 的单商户电商商城后端",
+	"description": "基于 Express、MySQL 和 Prisma 的可扩展多商户电商商城后端",
 	"type": "module",
 	"main": "src/server.js",
 	"scripts": {

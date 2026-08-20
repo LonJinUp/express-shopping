@@ -15,6 +15,22 @@ const detailInclude = {
 	order: { select: { orderNo: true, status: true, paidAmount: true, refundedAmount: true } },
 }
 
+function shopScope(shopId) {
+	return shopId ? { order: { shopId } } : {}
+}
+
+async function findRefundByRequest(clientRequestId, shopId) {
+	const refund = await prisma.refund.findUnique({ where: { clientRequestId } })
+	if (!refund) return null
+	if (shopId) {
+		const belongsToShop = await prisma.afterSale.count({ where: { id: refund.afterSaleId, order: { shopId } } })
+		if (!belongsToShop) {
+			throw new AppError('退款幂等键已被使用', { statusCode: 409, code: ERROR_CODES.CONFLICT })
+		}
+	}
+	return refund
+}
+
 export async function createAfterSale(userId, input) {
 	const existing = await prisma.afterSale.findUnique({
 		where: { userId_clientRequestId: { userId, clientRequestId: input.clientRequestId } },
@@ -140,8 +156,8 @@ export async function listAfterSales(userId, query) {
 	}
 }
 
-export async function listAdminAfterSales(query) {
-	const where = query.status ? { status: query.status } : {}
+export async function listAdminAfterSales(query, shopId) {
+	const where = { ...shopScope(shopId), ...(query.status ? { status: query.status } : {}) }
 	const skip = (query.page - 1) * query.pageSize
 	const [total, items, pendingCount, overdueCount] = await prisma.$transaction([
 		prisma.afterSale.count({ where }),
@@ -157,8 +173,10 @@ export async function listAdminAfterSales(query) {
 				refund: true,
 			},
 		}),
-		prisma.afterSale.count({ where: { status: { in: ['PENDING', 'RETURNED', 'REFUNDING'] } } }),
-		prisma.afterSale.count({ where: buildAfterSaleOverdueWhere() }),
+		prisma.afterSale.count({
+			where: { ...shopScope(shopId), status: { in: ['PENDING', 'RETURNED', 'REFUNDING'] } },
+		}),
+		prisma.afterSale.count({ where: { ...shopScope(shopId), ...buildAfterSaleOverdueWhere() } }),
 	])
 	return {
 		items,
@@ -168,9 +186,9 @@ export async function listAdminAfterSales(query) {
 	}
 }
 
-export async function getAdminAfterSale(id) {
-	const item = await prisma.afterSale.findUnique({
-		where: { id },
+export async function getAdminAfterSale(id, shopId) {
+	const item = await prisma.afterSale.findFirst({
+		where: { id, ...shopScope(shopId) },
 		include: { ...detailInclude, user: { select: { id: true, nickname: true, email: true, phone: true } } },
 	})
 	if (!item) throw new AppError('售后单不存在', { statusCode: 404, code: ERROR_CODES.NOT_FOUND })
@@ -291,9 +309,9 @@ export async function submitReturnShipment(userId, id, input) {
 	})
 }
 
-export async function reviewAfterSale(id, input, operatorId) {
+export async function reviewAfterSale(id, input, operatorId, shopId) {
 	return prisma.$transaction(async (tx) => {
-		const item = await tx.afterSale.findUnique({ where: { id } })
+		const item = await tx.afterSale.findFirst({ where: { id, ...shopScope(shopId) } })
 		if (!item || item.status !== 'PENDING')
 			throw new AppError('售后单不存在或已审核', { statusCode: 409, code: ERROR_CODES.CONFLICT })
 		if (input.action === 'REJECT') {
@@ -347,9 +365,12 @@ export async function reviewAfterSale(id, input, operatorId) {
 	})
 }
 
-export async function confirmReturn(id, operatorId) {
+export async function confirmReturn(id, operatorId, shopId) {
 	return prisma.$transaction(async (tx) => {
-		const item = await tx.afterSale.findUnique({ where: { id }, include: { items: { include: { orderItem: true } } } })
+		const item = await tx.afterSale.findFirst({
+			where: { id, ...shopScope(shopId) },
+			include: { items: { include: { orderItem: true } } },
+		})
 		if (!item || item.status !== 'RETURNED')
 			throw new AppError('售后单不存在或尚未收到退货', { statusCode: 409, code: ERROR_CODES.CONFLICT })
 		const now = new Date()
@@ -474,14 +495,17 @@ async function completeRefund(tx, refund, afterSale, operatorId, transactionId, 
 	if (isFullRefund) await restoreCoupon(tx, afterSale.order)
 }
 
-export async function createRefund(id, input, operatorId) {
-	const existing = await prisma.refund.findUnique({ where: { clientRequestId: input.clientRequestId } })
+export async function createRefund(id, input, operatorId, shopId) {
+	const existing = await findRefundByRequest(input.clientRequestId, shopId)
 	if (existing) return { refund: existing, duplicated: true }
 
 	try {
 		const refund = await prisma.$transaction(
 			async (tx) => {
-				const afterSale = await tx.afterSale.findUnique({ where: { id }, include: { order: true, refund: true } })
+				const afterSale = await tx.afterSale.findFirst({
+					where: { id, ...shopScope(shopId) },
+					include: { order: true, refund: true },
+				})
 				if (!afterSale || afterSale.status !== 'REFUNDING' || !afterSale.approvedAmount) {
 					throw new AppError('售后单不存在或当前状态不能退款', { statusCode: 409, code: ERROR_CODES.CONFLICT })
 				}
@@ -528,16 +552,19 @@ export async function createRefund(id, input, operatorId) {
 		return { refund, duplicated: false }
 	} catch (error) {
 		if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-			const refund = await prisma.refund.findUnique({ where: { clientRequestId: input.clientRequestId } })
+			const refund = await findRefundByRequest(input.clientRequestId, shopId)
 			if (refund) return { refund, duplicated: true }
 		}
 		throw error
 	}
 }
 
-export async function retryRefund(id, operatorId) {
+export async function retryRefund(id, operatorId, shopId) {
 	return prisma.$transaction(async (tx) => {
-		const refund = await tx.refund.findUnique({ where: { afterSaleId: id }, include: { afterSale: true } })
+		const refund = await tx.refund.findFirst({
+			where: { afterSaleId: id, ...(shopId ? { afterSale: shopScope(shopId) } : {}) },
+			include: { afterSale: true },
+		})
 		if (!refund || refund.status !== 'FAILED' || refund.afterSale.status !== 'REFUNDING') {
 			throw new AppError('退款单不存在或当前状态不能重试', { statusCode: 409, code: ERROR_CODES.CONFLICT })
 		}
@@ -596,15 +623,15 @@ export async function remindOverdueAfterSales(limit = 100) {
 	return remindedCount
 }
 
-export async function mockRefund(id, clientRequestId, operatorId) {
-	const existing = await prisma.refund.findUnique({ where: { clientRequestId } })
+export async function mockRefund(id, clientRequestId, operatorId, shopId) {
+	const existing = await findRefundByRequest(clientRequestId, shopId)
 	if (existing) return { refund: existing, duplicated: true }
 
 	try {
 		const refund = await prisma.$transaction(
 			async (tx) => {
-				const afterSale = await tx.afterSale.findUnique({
-					where: { id },
+				const afterSale = await tx.afterSale.findFirst({
+					where: { id, ...shopScope(shopId) },
 					include: { items: { include: { orderItem: true } }, order: true },
 				})
 				if (!afterSale || afterSale.status !== 'REFUNDING' || !afterSale.approvedAmount) {
@@ -641,7 +668,7 @@ export async function mockRefund(id, clientRequestId, operatorId) {
 		return { refund, duplicated: false }
 	} catch (error) {
 		if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-			const refund = await prisma.refund.findUnique({ where: { clientRequestId } })
+			const refund = await findRefundByRequest(clientRequestId, shopId)
 			if (refund) return { refund, duplicated: true }
 		}
 		throw error

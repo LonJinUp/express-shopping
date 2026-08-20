@@ -7,13 +7,18 @@ const cartInclude = {
 	sku: {
 		include: {
 			inventory: true,
-			product: { include: { images: { take: 1, orderBy: { sortOrder: 'asc' } } } },
+			product: {
+				include: {
+					images: { take: 1, orderBy: { sortOrder: 'asc' } },
+					shop: { select: { id: true, name: true, status: true } },
+				},
+			},
 		},
 	},
 }
 
 function serializeItem(item) {
-	const active = item.sku.isActive && item.sku.product.status === 'ACTIVE'
+	const active = item.sku.isActive && item.sku.product.status === 'ACTIVE' && item.sku.product.shop.status === 'ACTIVE'
 	const available = item.sku.inventory?.available ?? 0
 	return {
 		id: item.id,
@@ -34,8 +39,44 @@ function serializeItem(item) {
 			name: item.sku.product.name,
 			image: item.sku.product.images[0] ?? null,
 		},
+		shop: { id: item.sku.product.shop.id, name: item.sku.product.shop.name },
 		subtotal: item.sku.price * item.quantity,
 	}
+}
+
+function couponIdsByShop(input, shopIds) {
+	if (input.userCouponId && input.userCoupons?.length) {
+		throw new AppError('userCouponId 和 userCoupons 不能同时传入', {
+			statusCode: 422,
+			code: ERROR_CODES.VALIDATION_ERROR,
+		})
+	}
+	if (input.userCouponId) {
+		if (shopIds.size !== 1) {
+			throw new AppError('跨店结算请通过 userCoupons 分店铺选择优惠券', {
+				statusCode: 422,
+				code: ERROR_CODES.VALIDATION_ERROR,
+			})
+		}
+		return new Map([[shopIds.values().next().value, input.userCouponId]])
+	}
+	const couponMap = new Map()
+	for (const item of input.userCoupons ?? []) {
+		if (!shopIds.has(item.shopId)) {
+			throw new AppError('优惠券对应店铺不在本次结算范围内', {
+				statusCode: 422,
+				code: ERROR_CODES.VALIDATION_ERROR,
+			})
+		}
+		if (couponMap.has(item.shopId)) {
+			throw new AppError('同一店铺只能选择一张优惠券', {
+				statusCode: 422,
+				code: ERROR_CODES.VALIDATION_ERROR,
+			})
+		}
+		couponMap.set(item.shopId, item.userCouponId)
+	}
+	return couponMap
 }
 
 export async function listCart(userId) {
@@ -107,29 +148,41 @@ export async function checkoutPreview(userId, input) {
 		throw new AppError('结算商品已失效或库存不足', { statusCode: 422, code: ERROR_CODES.VALIDATION_ERROR })
 	}
 	const shopIds = new Set(items.map((item) => item.sku.product.shopId))
-	if (shopIds.size !== 1)
-		throw new AppError('当前版本一次只能结算同一店铺的商品', { statusCode: 422, code: ERROR_CODES.VALIDATION_ERROR })
-	const orderItems = items.map((item) => ({
-		skuId: item.skuId,
-		goodsAmount: item.sku.price * item.quantity,
-		discountAmount: 0,
-		payableAmount: item.sku.price * item.quantity,
-	}))
-	const pricing = await calculatePricing(prisma, {
-		userId,
-		shopId: items[0].sku.product.shopId,
-		address,
-		items: items.map((item) => ({ sku: item.sku, quantity: item.quantity })),
-		orderItems,
-		userCouponId: input.userCouponId,
-	})
+	const couponMap = couponIdsByShop(input, shopIds)
+	const shops = []
+	for (const shopId of shopIds) {
+		const shopItems = items.filter((item) => item.sku.product.shopId === shopId)
+		const orderItems = shopItems.map((item) => ({
+			skuId: item.skuId,
+			goodsAmount: item.sku.price * item.quantity,
+			discountAmount: 0,
+			payableAmount: item.sku.price * item.quantity,
+		}))
+		const pricing = await calculatePricing(prisma, {
+			userId,
+			shopId,
+			address,
+			items: shopItems.map((item) => ({ sku: item.sku, quantity: item.quantity })),
+			orderItems,
+			userCouponId: couponMap.get(shopId),
+		})
+		shops.push({
+			shop: { id: shopId, name: shopItems[0].sku.product.shop.name },
+			items: shopItems.map((item, index) => ({
+				...serializeItem(item),
+				discountAmount: orderItems[index].discountAmount,
+				payableAmount: orderItems[index].payableAmount,
+			})),
+			...pricing,
+			userCoupon: pricing.userCoupon ? { id: pricing.userCoupon.id, coupon: pricing.userCoupon.coupon } : null,
+		})
+	}
 	return {
-		items: serialized.map((item, index) => ({
-			...item,
-			discountAmount: orderItems[index].discountAmount,
-			payableAmount: orderItems[index].payableAmount,
-		})),
-		...pricing,
-		userCoupon: pricing.userCoupon ? { id: pricing.userCoupon.id, coupon: pricing.userCoupon.coupon } : null,
+		shops,
+		items: shops.flatMap((shop) => shop.items),
+		goodsAmount: shops.reduce((sum, shop) => sum + shop.goodsAmount, 0),
+		discountAmount: shops.reduce((sum, shop) => sum + shop.discountAmount, 0),
+		shippingAmount: shops.reduce((sum, shop) => sum + shop.shippingAmount, 0),
+		payableAmount: shops.reduce((sum, shop) => sum + shop.payableAmount, 0),
 	}
 }

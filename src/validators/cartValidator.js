@@ -33,4 +33,13 @@ export const checkoutPreviewSchema = z.object({
 	addressId: z.string().min(1).max(30),
 	itemIds: z.array(z.string().min(1).max(30)).min(1).max(200).optional(),
 	userCouponId: z.string().min(1).max(30).optional(),
+	userCoupons: z
+		.array(
+			z.object({
+				shopId: z.string().min(1).max(30),
+				userCouponId: z.string().min(1).max(30),
+			})
+		)
+		.max(100)
+		.optional(),
 })

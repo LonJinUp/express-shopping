@@ -37,6 +37,8 @@ const requiredOperations = [
 	['post', '/api/v1/orders/create'],
 	['get', '/api/v1/orders'],
 	['get', '/api/v1/orders/detail'],
+	['get', '/api/v1/platform-orders'],
+	['get', '/api/v1/platform-orders/detail'],
 	['post', '/api/v1/orders/cancel'],
 	['post', '/api/v1/orders/confirm-receipt'],
 	['post', '/api/v1/orders/buy-again'],

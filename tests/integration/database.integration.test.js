@@ -15,6 +15,7 @@ import {
 	reviewAfterSale,
 } from '../../src/services/afterSaleService.js'
 import { purgeExpiredData } from '../../src/services/dataRetentionService.js'
+import { checkoutPreview } from '../../src/services/cartService.js'
 import { createOrder } from '../../src/services/orderService.js'
 import { mockPay } from '../../src/services/paymentService.js'
 
@@ -66,17 +67,18 @@ async function createUser(role, suffix) {
 	})
 }
 
-async function createActiveProduct(operatorId, stock = 1) {
-	const category = await prisma.category.create({ data: { name: '测试分类', slug: `category-${Date.now()}` } })
+async function createActiveProduct(operatorId, stock = 1, shopId) {
+	const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+	const category = await prisma.category.create({ data: { name: '测试分类', slug: `category-${unique}` } })
 	const product = await createProduct(
 		{
 			categoryId: category.id,
 			name: '并发测试商品',
-			slug: `product-${Date.now()}`,
+			slug: `product-${unique}`,
 			images: [],
 			skus: [
 				{
-					skuCode: `SKU-${Date.now()}`,
+					skuCode: `SKU-${unique}`,
 					name: '默认规格',
 					specifications: { color: 'black' },
 					price: 9900,
@@ -84,7 +86,8 @@ async function createActiveProduct(operatorId, stock = 1) {
 				},
 			],
 		},
-		operatorId
+		operatorId,
+		shopId
 	)
 	await prisma.product.update({ where: { id: product.id }, data: { status: 'ACTIVE' } })
 	return product.skus[0]
@@ -173,6 +176,290 @@ describe.sequential('MySQL integration', () => {
 			.get('/api/v1/admin/products')
 			.set('authorization', `Bearer ${refresh.body.data.accessToken}`)
 			.expect(403)
+	})
+
+	it('onboards a merchant and isolates shop management permissions', async () => {
+		const { userRole, adminRole } = await seedBase()
+		const [applicant, outsider] = await Promise.all([
+			createUser(userRole, 'merchant-applicant'),
+			createUser(userRole, 'merchant-outsider'),
+		])
+		const admin = await createUser(adminRole, 'merchant-reviewer')
+		const login = async (email) =>
+			request(app).post('/api/v1/auth/login').send({ identifier: email, password: 'password123' }).expect(200)
+		const [applicantLogin, outsiderLogin, adminLogin] = await Promise.all([
+			login(applicant.email),
+			login(outsider.email),
+			login(admin.email),
+		])
+		const applicantToken = applicantLogin.body.data.accessToken
+		const outsiderToken = outsiderLogin.body.data.accessToken
+		const adminToken = adminLogin.body.data.accessToken
+		const input = {
+			clientRequestId: 'merchant-application-001',
+			merchantName: '集成测试商户',
+			merchantCode: 'INTEGRATION_MERCHANT',
+			shopName: '集成测试店铺',
+			shopCode: 'INTEGRATION_SHOP',
+			contactName: '测试联系人',
+			contactPhone: '13800000001',
+		}
+
+		const created = await request(app)
+			.post('/api/v1/merchant-applications/create')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send(input)
+			.expect(201)
+		const repeated = await request(app)
+			.post('/api/v1/merchant-applications/create')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send(input)
+			.expect(200)
+		expect(repeated.body.data).toMatchObject({
+			duplicated: true,
+			application: { id: created.body.data.application.id },
+		})
+
+		await request(app)
+			.post('/api/v1/merchant-applications/create')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send({ ...input, clientRequestId: 'merchant-application-002' })
+			.expect(409)
+
+		const applications = await request(app)
+			.get('/api/v1/admin/merchant-applications?status=PENDING')
+			.set('authorization', `Bearer ${adminToken}`)
+			.expect(200)
+		expect(applications.body.data.pagination.total).toBe(1)
+
+		await request(app)
+			.post('/api/v1/admin/merchant-applications/review')
+			.set('authorization', `Bearer ${adminToken}`)
+			.send({ id: created.body.data.application.id, action: 'APPROVE' })
+			.expect(200)
+		await request(app)
+			.post('/api/v1/admin/merchant-applications/review')
+			.set('authorization', `Bearer ${adminToken}`)
+			.send({ id: created.body.data.application.id, action: 'APPROVE' })
+			.expect(409)
+
+		const shops = await request(app)
+			.get('/api/v1/merchant/shops')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.expect(200)
+		const shop = shops.body.data[0].merchant.shops[0]
+		expect(shops.body.data[0]).toMatchObject({ role: 'OWNER', merchant: { code: 'INTEGRATION_MERCHANT' } })
+
+		await request(app)
+			.post('/api/v1/merchant/shops/update')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send({ id: shop.id, name: '更新后的店铺' })
+			.expect(200)
+		await request(app)
+			.post('/api/v1/merchant/shops/update')
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.send({ id: shop.id, name: '越权修改' })
+			.expect(403)
+
+		const otherMerchant = await prisma.merchant.create({
+			data: {
+				name: '其他商户',
+				code: 'OTHER_MERCHANT',
+				members: { create: { userId: outsider.id, role: 'OWNER' } },
+				shops: { create: { name: '其他店铺', code: 'OTHER_SHOP' } },
+			},
+			include: { shops: true },
+		})
+		const otherShop = otherMerchant.shops[0]
+		const category = await prisma.category.create({
+			data: { name: '商户隔离分类', slug: 'merchant-isolation-category' },
+		})
+		const productInput = {
+			shopId: shop.id,
+			categoryId: category.id,
+			name: '商户隔离商品',
+			slug: 'merchant-isolation-product',
+			images: [],
+			skus: [
+				{
+					skuCode: 'MERCHANT-ISOLATION-SKU',
+					name: '默认规格',
+					specifications: { color: 'black' },
+					price: 19900,
+					stock: 5,
+				},
+			],
+		}
+		const createdProduct = await request(app)
+			.post('/api/v1/merchant/products/create')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send(productInput)
+			.expect(201)
+		const product = createdProduct.body.data
+		const sku = product.skus[0]
+		const now = Date.now()
+		const couponInput = {
+			shopId: shop.id,
+			code: 'MERCHANT_PRODUCT_COUPON',
+			name: '商户指定商品券',
+			scope: 'PRODUCT',
+			thresholdAmount: 10000,
+			discountAmount: 1000,
+			totalQuantity: 100,
+			startsAt: new Date(now - 60_000).toISOString(),
+			endsAt: new Date(now + 86_400_000).toISOString(),
+			productIds: [product.id],
+			categoryIds: [],
+		}
+		await request(app)
+			.post('/api/v1/merchant/coupons/create')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send(couponInput)
+			.expect(201)
+		const merchantCoupons = await request(app)
+			.get(`/api/v1/merchant/coupons?shopId=${shop.id}`)
+			.set('authorization', `Bearer ${applicantToken}`)
+			.expect(200)
+		expect(merchantCoupons.body.data.pagination.total).toBe(1)
+		await request(app)
+			.post('/api/v1/merchant/coupons/create')
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.send({ ...couponInput, shopId: otherShop.id, code: 'CROSS_SHOP_COUPON' })
+			.expect(422)
+
+		await request(app)
+			.post('/api/v1/merchant/shipping-templates/create')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send({ shopId: shop.id, name: '商户默认运费', baseFee: 1200, isDefault: true, regionRules: [] })
+			.expect(201)
+		const shippingTemplates = await request(app)
+			.get(`/api/v1/merchant/shipping-templates?shopId=${otherShop.id}`)
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.expect(200)
+		expect(shippingTemplates.body.data).toHaveLength(0)
+
+		await request(app)
+			.get(`/api/v1/merchant/products?shopId=${shop.id}`)
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.expect(403)
+		const isolatedProducts = await request(app)
+			.get(`/api/v1/merchant/products?shopId=${otherShop.id}`)
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.expect(200)
+		expect(isolatedProducts.body.data.pagination.total).toBe(0)
+		await request(app)
+			.post('/api/v1/merchant/skus/inventory/adjust')
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.send({ shopId: otherShop.id, id: sku.id, difference: 1, remark: '跨店库存调整' })
+			.expect(404)
+
+		await request(app)
+			.post('/api/v1/merchant/products/status')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send({ shopId: shop.id, id: product.id, status: 'ACTIVE' })
+			.expect(200)
+		const { order } = await createOrder(outsider.id, {
+			source: 'DIRECT',
+			clientRequestId: 'merchant-isolation-order',
+			addressId: outsider.addresses[0].id,
+			skuId: sku.id,
+			quantity: 1,
+		})
+		await mockPay(outsider.id, { orderId: order.id, clientRequestId: 'merchant-isolation-payment' })
+		const paidOrder = await prisma.order.findUnique({ where: { id: order.id }, include: { items: true } })
+
+		const merchantDashboard = await request(app)
+			.get(`/api/v1/merchant/analytics/dashboard?shopId=${shop.id}`)
+			.set('authorization', `Bearer ${applicantToken}`)
+			.expect(200)
+		expect(merchantDashboard.body.data).toMatchObject({
+			orderCount: 1,
+			paidOrderCount: 1,
+			salesAmount: paidOrder.paidAmount,
+		})
+		const otherDashboard = await request(app)
+			.get(`/api/v1/merchant/analytics/dashboard?shopId=${otherShop.id}`)
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.expect(200)
+		expect(otherDashboard.body.data).toMatchObject({ orderCount: 0, paidOrderCount: 0, salesAmount: 0 })
+		const startDate = encodeURIComponent(new Date(now - 86_400_000).toISOString())
+		const endDate = encodeURIComponent(new Date(now + 86_400_000).toISOString())
+		const merchantExport = await request(app)
+			.get(`/api/v1/merchant/orders/export?shopId=${shop.id}&startDate=${startDate}&endDate=${endDate}`)
+			.set('authorization', `Bearer ${applicantToken}`)
+			.expect(200)
+		expect(merchantExport.text).toContain(order.orderNo)
+		const otherExport = await request(app)
+			.get(`/api/v1/merchant/orders/export?shopId=${otherShop.id}&startDate=${startDate}&endDate=${endDate}`)
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.expect(200)
+		expect(otherExport.text).not.toContain(order.orderNo)
+
+		const { afterSale } = await createAfterSale(outsider.id, {
+			clientRequestId: 'merchant-isolation-after-sale',
+			orderId: order.id,
+			type: 'REFUND_ONLY',
+			reason: '商户售后隔离测试',
+			items: [{ orderItemId: paidOrder.items[0].id, quantity: 1 }],
+		})
+		const merchantAfterSales = await request(app)
+			.get(`/api/v1/merchant/after-sales?shopId=${shop.id}`)
+			.set('authorization', `Bearer ${applicantToken}`)
+			.expect(200)
+		expect(merchantAfterSales.body.data.pagination.total).toBe(1)
+		await request(app)
+			.get(`/api/v1/merchant/after-sales/detail?shopId=${otherShop.id}&id=${afterSale.id}`)
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.expect(404)
+		await request(app)
+			.post('/api/v1/merchant/after-sales/review')
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.send({ shopId: otherShop.id, id: afterSale.id, action: 'REJECT', remark: '越权审核' })
+			.expect(409)
+		await request(app)
+			.post('/api/v1/merchant/after-sales/review')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send({ shopId: shop.id, id: afterSale.id, action: 'REJECT', remark: '恢复订单继续履约' })
+			.expect(200)
+
+		const merchantOrders = await request(app)
+			.get(`/api/v1/merchant/orders?shopId=${shop.id}`)
+			.set('authorization', `Bearer ${applicantToken}`)
+			.expect(200)
+		expect(merchantOrders.body.data.pagination.total).toBe(1)
+		const otherOrders = await request(app)
+			.get(`/api/v1/merchant/orders?shopId=${otherShop.id}`)
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.expect(200)
+		expect(otherOrders.body.data.pagination.total).toBe(0)
+		await request(app)
+			.get(`/api/v1/merchant/orders/detail?shopId=${otherShop.id}&id=${order.id}`)
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.expect(404)
+		await request(app)
+			.post('/api/v1/merchant/orders/accept')
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.send({ shopId: otherShop.id, id: order.id })
+			.expect(409)
+		await request(app)
+			.post('/api/v1/merchant/orders/accept')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send({ shopId: shop.id, id: order.id })
+			.expect(200)
+		await request(app)
+			.post('/api/v1/merchant/orders/ship')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.send({
+				shopId: shop.id,
+				id: order.id,
+				carrierCode: 'SF',
+				carrierName: '顺丰速运',
+				trackingNumber: 'SF-MERCHANT-001',
+			})
+			.expect(200)
+
+		expect(await prisma.merchant.count({ where: { code: 'INTEGRATION_MERCHANT' } })).toBe(1)
+		expect(await prisma.merchantMember.count({ where: { userId: applicant.id, role: 'OWNER' } })).toBe(1)
 	})
 
 	it('creates product inventory and rejects adjustments below zero', async () => {
@@ -376,6 +663,59 @@ describe.sequential('MySQL integration', () => {
 		expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
 		expect(results.filter(({ status }) => status === 'rejected')).toHaveLength(1)
 		expect(await prisma.afterSale.count({ where: { orderId: order.id } })).toBe(1)
+	})
+
+	it('previews and creates idempotent child orders for a cross-shop cart', async () => {
+		const { shop, userRole } = await seedBase()
+		const user = await createUser(userRole, 'cross-shop-buyer')
+		const secondMerchant = await prisma.merchant.create({ data: { code: 'SECOND', name: '第二商户' } })
+		const secondShop = await prisma.shop.create({
+			data: { merchantId: secondMerchant.id, code: 'SECOND', name: '第二店铺' },
+		})
+		const [firstSku, secondSku] = await Promise.all([
+			createActiveProduct(user.id, 3, shop.id),
+			createActiveProduct(user.id, 4, secondShop.id),
+		])
+		await prisma.cartItem.createMany({
+			data: [
+				{ userId: user.id, skuId: firstSku.id, quantity: 1 },
+				{ userId: user.id, skuId: secondSku.id, quantity: 2 },
+			],
+		})
+		const cartItems = await prisma.cartItem.findMany({ where: { userId: user.id }, orderBy: { skuId: 'asc' } })
+		const cartItemIds = cartItems.map((item) => item.id)
+
+		const preview = await checkoutPreview(user.id, {
+			addressId: user.addresses[0].id,
+			itemIds: cartItemIds,
+		})
+		expect(preview.shops).toHaveLength(2)
+		expect(preview.payableAmount).toBe(9900 * 3)
+
+		const input = {
+			source: 'CART',
+			clientRequestId: 'cross-shop-order-001',
+			addressId: user.addresses[0].id,
+			cartItemIds,
+		}
+		const first = await createOrder(user.id, input)
+		const second = await createOrder(user.id, input)
+		expect(first.duplicated).toBe(false)
+		expect(second.duplicated).toBe(true)
+		expect(first.order.id).toBe(second.order.id)
+		expect(first.order.orders).toHaveLength(2)
+		expect(new Set(first.order.orders.map((order) => order.shopId))).toEqual(new Set([shop.id, secondShop.id]))
+		expect(await prisma.platformOrder.count()).toBe(1)
+		expect(await prisma.order.count()).toBe(2)
+		expect(await prisma.cartItem.count({ where: { userId: user.id } })).toBe(0)
+		expect(await prisma.inventory.findUnique({ where: { skuId: firstSku.id } })).toMatchObject({
+			available: 2,
+			locked: 1,
+		})
+		expect(await prisma.inventory.findUnique({ where: { skuId: secondSku.id } })).toMatchObject({
+			available: 2,
+			locked: 2,
+		})
 	})
 
 	it('purges expired personal and operational data while retaining current records', async () => {
