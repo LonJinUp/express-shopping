@@ -7,7 +7,7 @@ import { env } from '../config/env.js'
 import { logger } from '../config/logger.js'
 import { getPaymentChannel, normalizePaymentQueryResult } from './paymentChannelService.js'
 import { recordPaymentRevenue } from './merchantFinanceService.js'
-import { enqueueNotification } from './notificationService.js'
+import { enqueueNotification, enqueueShopMemberNotifications } from './notificationService.js'
 
 function nextPaymentQueryAt(now = new Date()) {
 	return new Date(now.getTime() + env.PAYMENT_QUERY_INTERVAL_SECONDS * 1000)
@@ -135,6 +135,15 @@ export async function mockPay(userId, input) {
 					referenceType: 'ORDER',
 					referenceId: order.id,
 				})
+				await enqueueShopMemberNotifications(tx, {
+					shopId: order.shopId,
+					eventKey: `MERCHANT_ORDER_PAID:${order.id}`,
+					type: 'MERCHANT_ORDER_PAID',
+					title: '有新的已付款订单',
+					content: `订单 ${order.orderNo} 已付款，实付 ${order.payableAmount} 分，请及时接单处理。`,
+					referenceType: 'ORDER',
+					referenceId: order.id,
+				})
 				return created
 			},
 			{ isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
@@ -201,6 +210,15 @@ async function applySuccessfulPayment(tx, payment, transactionId, remark) {
 		type: 'ORDER_PAID',
 		title: '订单支付成功',
 		content: `订单 ${order.orderNo} 已支付成功，商家将尽快处理。`,
+		referenceType: 'ORDER',
+		referenceId: order.id,
+	})
+	await enqueueShopMemberNotifications(tx, {
+		shopId: order.shopId,
+		eventKey: `MERCHANT_ORDER_PAID:${order.id}`,
+		type: 'MERCHANT_ORDER_PAID',
+		title: '有新的已付款订单',
+		content: `订单 ${order.orderNo} 已付款，实付 ${order.payableAmount} 分，请及时接单处理。`,
 		referenceType: 'ORDER',
 		referenceId: order.id,
 	})

@@ -458,6 +458,23 @@ describe.sequential('MySQL integration', () => {
 			quantity: 1,
 		})
 		await mockPay(outsider.id, { orderId: order.id, clientRequestId: 'merchant-isolation-payment' })
+		const repeatedPayment = await mockPay(outsider.id, {
+			orderId: order.id,
+			clientRequestId: 'merchant-isolation-payment',
+		})
+		expect(repeatedPayment.duplicated).toBe(true)
+		const merchantOrderOutboxes = await prisma.notificationOutbox.findMany({
+			where: { eventKey: `MERCHANT_ORDER_PAID:${order.id}` },
+			orderBy: { userId: 'asc' },
+		})
+		expect(merchantOrderOutboxes.map((item) => item.userId)).toEqual([applicant.id, manager.id].sort())
+		expect(merchantOrderOutboxes.some((item) => item.userId === staff.id)).toBe(false)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 3, failedCount: 0 })
+		expect(
+			await prisma.userNotification.count({
+				where: { userId: { in: [applicant.id, manager.id] }, eventKey: `MERCHANT_ORDER_PAID:${order.id}` },
+			})
+		).toBe(2)
 		const paidOrder = await prisma.order.findUnique({ where: { id: order.id }, include: { items: true } })
 
 		const merchantDashboard = await request(app)

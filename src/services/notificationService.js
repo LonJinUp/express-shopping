@@ -10,7 +10,13 @@ const OUTBOX_STATUSES = ['PENDING', 'PROCESSING', 'SENT', 'FAILED', 'EXHAUSTED']
 
 export function enqueueNotification(tx, input) {
 	return tx.notificationOutbox.upsert({
-		where: { channel_eventKey: { channel: input.channel ?? 'IN_APP', eventKey: input.eventKey } },
+		where: {
+			channel_userId_eventKey: {
+				channel: input.channel ?? 'IN_APP',
+				userId: input.userId,
+				eventKey: input.eventKey,
+			},
+		},
 		update: {},
 		create: {
 			channel: input.channel ?? 'IN_APP',
@@ -26,6 +32,26 @@ export function enqueueNotification(tx, input) {
 			maxAttempts: env.NOTIFICATION_OUTBOX_MAX_ATTEMPTS,
 		},
 	})
+}
+
+export async function enqueueShopMemberNotifications(tx, input) {
+	const shop = await tx.shop.findUnique({
+		where: { id: input.shopId },
+		select: {
+			merchant: {
+				select: {
+					members: {
+						where: { status: 'ACTIVE', user: { status: 'ACTIVE' } },
+						select: { userId: true },
+					},
+				},
+			},
+		},
+	})
+	if (!shop) return []
+	return Promise.all(
+		shop.merchant.members.map((member) => enqueueNotification(tx, { ...input, userId: member.userId }))
+	)
 }
 
 export async function listNotifications(userId, query) {
