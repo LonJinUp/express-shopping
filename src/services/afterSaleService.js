@@ -10,6 +10,23 @@ import { enqueueNotification, enqueueShopMemberNotifications } from './notificat
 
 const activeStatuses = ['PENDING', 'ARBITRATING', 'APPROVED', 'WAITING_RETURN', 'RETURNED', 'REFUNDING']
 const applicableOrderStatuses = ['PAID', 'PROCESSING', 'SHIPPED', 'COMPLETED']
+const merchantOverdueNotifications = {
+	PENDING: {
+		type: 'MERCHANT_AFTER_SALE_REVIEW_OVERDUE',
+		title: '售后申请等待审核',
+		content: '售后申请已超过审核时限，请尽快处理。',
+	},
+	RETURNED: {
+		type: 'MERCHANT_AFTER_SALE_RECEIVE_OVERDUE',
+		title: '退货等待确认收货',
+		content: '买家退货已超过确认收货时限，请尽快核实物流并处理。',
+	},
+	REFUNDING: {
+		type: 'MERCHANT_AFTER_SALE_REFUND_OVERDUE',
+		title: '售后退款等待处理',
+		content: '售后退款已超过处理时限，请尽快核对退款状态。',
+	},
+}
 const detailInclude = {
 	items: { include: { orderItem: true } },
 	logs: { orderBy: { createdAt: 'asc' } },
@@ -826,7 +843,7 @@ export async function retryRefund(id, operatorId, shopId) {
 export async function remindOverdueAfterSales(limit = 100) {
 	const items = await prisma.afterSale.findMany({
 		where: buildAfterSaleOverdueWhere(new Date(), undefined, true),
-		select: { id: true, status: true },
+		select: { id: true, status: true, userId: true, order: { select: { shopId: true, orderNo: true } } },
 		orderBy: { updatedAt: 'asc' },
 		take: limit,
 	})
@@ -847,6 +864,28 @@ export async function remindOverdueAfterSales(limit = 100) {
 					remark: '售后单已超过当前处理时限',
 				},
 			})
+			const eventKey = `AFTER_SALE_OVERDUE:${item.id}:${item.status}`
+			if (item.status === 'WAITING_RETURN') {
+				await enqueueNotification(tx, {
+					eventKey,
+					userId: item.userId,
+					type: 'AFTER_SALE_RETURN_OVERDUE',
+					title: '请尽快寄回商品',
+					content: `订单 ${item.order.orderNo} 的退货期限已到，请尽快填写退货物流。`,
+					referenceType: 'AFTER_SALE',
+					referenceId: item.id,
+				})
+			} else {
+				const notification = merchantOverdueNotifications[item.status]
+				await enqueueShopMemberNotifications(tx, {
+					shopId: item.order.shopId,
+					eventKey,
+					...notification,
+					content: `订单 ${item.order.orderNo}：${notification.content}`,
+					referenceType: 'AFTER_SALE',
+					referenceId: item.id,
+				})
+			}
 			remindedCount += 1
 		})
 	}

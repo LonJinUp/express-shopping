@@ -14,6 +14,7 @@ import {
 	mockRefund,
 	processRefundCallback,
 	requestArbitration,
+	remindOverdueAfterSales,
 	resolveArbitration,
 	retryRefund,
 	reviewAfterSale,
@@ -888,6 +889,8 @@ describe.sequential('MySQL integration', () => {
 		const order = await createPaidOrder(buyer, sku, 1, 'return-progress-order')
 		expect(await processNotificationOutbox()).toEqual({ processedCount: 2, failedCount: 0 })
 		await prisma.order.update({ where: { id: order.id }, data: { status: 'SHIPPED', shippedAt: new Date() } })
+		const makeOverdue = (id) =>
+			prisma.afterSale.update({ where: { id }, data: { updatedAt: new Date('2020-01-01'), remindedAt: null } })
 
 		const { afterSale } = await createAfterSale(buyer.id, {
 			clientRequestId: 'return-progress-after-sale',
@@ -897,8 +900,15 @@ describe.sequential('MySQL integration', () => {
 			items: [{ orderItemId: order.items[0].id, quantity: 1 }],
 		})
 		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		await makeOverdue(afterSale.id)
+		expect(await remindOverdueAfterSales()).toBe(1)
+		expect(await remindOverdueAfterSales()).toBe(0)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
 
 		await reviewAfterSale(afterSale.id, { action: 'APPROVE', remark: '同意退货退款' }, merchantOwner.id, shop.id)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		await makeOverdue(afterSale.id)
+		expect(await remindOverdueAfterSales()).toBe(1)
 		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
 		await expect(
 			reviewAfterSale(afterSale.id, { action: 'APPROVE', remark: '重复审核' }, merchantOwner.id, shop.id)
@@ -910,6 +920,9 @@ describe.sequential('MySQL integration', () => {
 			trackingNumber: 'SF-RETURN-001',
 		})
 		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		await makeOverdue(afterSale.id)
+		expect(await remindOverdueAfterSales()).toBe(1)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
 		await expect(
 			submitReturnShipment(buyer.id, afterSale.id, {
 				carrierCode: 'SF',
@@ -920,6 +933,17 @@ describe.sequential('MySQL integration', () => {
 
 		await confirmReturn(afterSale.id, merchantOwner.id, shop.id)
 		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		await makeOverdue(afterSale.id)
+		expect(await remindOverdueAfterSales()).toBe(1)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		await makeOverdue(afterSale.id)
+		expect(await remindOverdueAfterSales()).toBe(1)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 0, failedCount: 0 })
+		expect(
+			await prisma.notificationOutbox.count({
+				where: { eventKey: `AFTER_SALE_OVERDUE:${afterSale.id}:REFUNDING`, userId: merchantOwner.id },
+			})
+		).toBe(1)
 		await expect(confirmReturn(afterSale.id, merchantOwner.id, shop.id)).rejects.toMatchObject({ statusCode: 409 })
 
 		const buyerTypes = (
@@ -927,13 +951,21 @@ describe.sequential('MySQL integration', () => {
 		)
 			.map((item) => item.type)
 			.sort()
-		expect(buyerTypes).toEqual(['AFTER_SALE_APPROVED', 'AFTER_SALE_RETURN_CONFIRMED'])
+		expect(buyerTypes).toEqual(['AFTER_SALE_APPROVED', 'AFTER_SALE_RETURN_CONFIRMED', 'AFTER_SALE_RETURN_OVERDUE'])
 		const merchantTypes = (
 			await prisma.userNotification.findMany({ where: { userId: merchantOwner.id, referenceId: afterSale.id } })
 		)
 			.map((item) => item.type)
 			.sort()
-		expect(merchantTypes).toEqual(['MERCHANT_AFTER_SALE_CREATED', 'MERCHANT_AFTER_SALE_RETURNED'])
+		expect(new Set(merchantTypes)).toEqual(
+			new Set([
+				'MERCHANT_AFTER_SALE_CREATED',
+				'MERCHANT_AFTER_SALE_RECEIVE_OVERDUE',
+				'MERCHANT_AFTER_SALE_REFUND_OVERDUE',
+				'MERCHANT_AFTER_SALE_REVIEW_OVERDUE',
+				'MERCHANT_AFTER_SALE_RETURNED',
+			])
+		)
 		expect(await prisma.afterSale.findUnique({ where: { id: afterSale.id } })).toMatchObject({ status: 'REFUNDING' })
 		expect(await prisma.inventory.findUnique({ where: { skuId: sku.id } })).toMatchObject({ available: 1, locked: 0 })
 	})

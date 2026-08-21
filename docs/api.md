@@ -43,6 +43,8 @@
 
 售后申请与退货物流提交后会通知店铺活跃成员；商家审核通过、审核驳回和确认收到退货后会通知买家。通知事件与售后状态、订单状态和退货入库在同一事务中提交。
 
+售后超时巡检会按当前责任方发送一次阶段提醒：`PENDING`、`RETURNED`、`REFUNDING` 提醒店铺活跃成员，`WAITING_RETURN` 提醒买家。进入新状态后可发送新阶段提醒，同一状态重复扫描不会重复通知。
+
 管理员可通过 `GET /api/v1/admin/notification-outbox` 按状态、渠道、用户和事件键查询投递任务及状态汇总。`POST /api/v1/admin/notification-outbox/retry` 可将 `FAILED` 或 `EXHAUSTED` 任务重新入队，任务 ID 通过 body 传递。
 
 ## 商城目录
