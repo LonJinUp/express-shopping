@@ -6,7 +6,7 @@ import { createAfterSaleNo, createRefundNo } from '../utils/transactionNo.js'
 import { buildAfterSaleOverdueWhere } from './afterSaleReminderService.js'
 import { calculateAfterSaleAmount } from './refundCalculationService.js'
 import { recordRefundReversal } from './merchantFinanceService.js'
-import { enqueueNotification } from './notificationService.js'
+import { enqueueNotification, enqueueShopMemberNotifications } from './notificationService.js'
 
 const activeStatuses = ['PENDING', 'ARBITRATING', 'APPROVED', 'WAITING_RETURN', 'RETURNED', 'REFUNDING']
 const applicableOrderStatuses = ['PAID', 'PROCESSING', 'SHIPPED', 'COMPLETED']
@@ -122,6 +122,15 @@ export async function createAfterSale(userId, input) {
 						operatorId: userId,
 						remark: input.reason,
 					},
+				})
+				await enqueueShopMemberNotifications(tx, {
+					shopId: order.shopId,
+					eventKey: `MERCHANT_AFTER_SALE_CREATED:${created.id}`,
+					type: 'MERCHANT_AFTER_SALE_CREATED',
+					title: '有新的售后申请',
+					content: `订单 ${order.orderNo} 收到售后申请，申请退款 ${calculation.requestedAmount} 分，请及时处理。`,
+					referenceType: 'AFTER_SALE',
+					referenceId: created.id,
 				})
 				return tx.afterSale.findUnique({ where: { id: created.id }, include: detailInclude })
 			},
@@ -450,6 +459,11 @@ export async function resolveArbitration(id, input, operatorId) {
 
 export async function submitReturnShipment(userId, id, input) {
 	return prisma.$transaction(async (tx) => {
+		const item = await tx.afterSale.findFirst({
+			where: { id, userId, status: 'WAITING_RETURN', type: 'RETURN_REFUND' },
+			select: { id: true, order: { select: { shopId: true, orderNo: true } } },
+		})
+		if (!item) throw new AppError('售后单不存在或当前状态不能填写物流', { statusCode: 409, code: ERROR_CODES.CONFLICT })
 		const changed = await tx.afterSale.updateMany({
 			where: { id, userId, status: 'WAITING_RETURN', type: 'RETURN_REFUND' },
 			data: {
@@ -471,6 +485,15 @@ export async function submitReturnShipment(userId, id, input) {
 				operatorId: userId,
 				remark: `${input.carrierName} ${input.trackingNumber}`,
 			},
+		})
+		await enqueueShopMemberNotifications(tx, {
+			shopId: item.order.shopId,
+			eventKey: `MERCHANT_AFTER_SALE_RETURNED:${id}`,
+			type: 'MERCHANT_AFTER_SALE_RETURNED',
+			title: '买家已寄回商品',
+			content: `订单 ${item.order.orderNo} 的退货已寄出，${input.carrierName} ${input.trackingNumber}，请注意查收。`,
+			referenceType: 'AFTER_SALE',
+			referenceId: id,
 		})
 		return tx.afterSale.findUnique({ where: { id }, include: detailInclude })
 	})
@@ -504,6 +527,15 @@ export async function reviewAfterSale(id, input, operatorId, shopId) {
 					remark: input.remark,
 				},
 			})
+			await enqueueNotification(tx, {
+				eventKey: `AFTER_SALE_REVIEWED:${id}`,
+				userId: item.userId,
+				type: 'AFTER_SALE_REJECTED',
+				title: '售后申请未通过',
+				content: `您的售后申请未通过：${input.remark}`,
+				referenceType: 'AFTER_SALE',
+				referenceId: id,
+			})
 			return tx.afterSale.findUnique({ where: { id }, include: detailInclude })
 		}
 		const approvedAmount = input.approvedAmount ?? item.requestedAmount
@@ -527,6 +559,18 @@ export async function reviewAfterSale(id, input, operatorId, shopId) {
 				operatorId,
 				remark: input.remark,
 			},
+		})
+		await enqueueNotification(tx, {
+			eventKey: `AFTER_SALE_REVIEWED:${id}`,
+			userId: item.userId,
+			type: 'AFTER_SALE_APPROVED',
+			title: '售后申请已通过',
+			content:
+				item.type === 'RETURN_REFUND'
+					? `您的退货退款申请已通过，核准退款 ${approvedAmount} 分，请按售后详情寄回商品。`
+					: `您的退款申请已通过，核准退款 ${approvedAmount} 分，平台将继续处理退款。`,
+			referenceType: 'AFTER_SALE',
+			referenceId: id,
 		})
 		return tx.afterSale.findUnique({ where: { id }, include: detailInclude })
 	})
@@ -575,6 +619,15 @@ export async function confirmReturn(id, operatorId, shopId) {
 				operatorId,
 				remark: '商家确认收到退货',
 			},
+		})
+		await enqueueNotification(tx, {
+			eventKey: `AFTER_SALE_RETURN_CONFIRMED:${id}`,
+			userId: item.userId,
+			type: 'AFTER_SALE_RETURN_CONFIRMED',
+			title: '商家已收到退货',
+			content: '商家已确认收到退货，退款正在处理中。',
+			referenceType: 'AFTER_SALE',
+			referenceId: id,
 		})
 		return tx.afterSale.findUnique({ where: { id }, include: detailInclude })
 	})

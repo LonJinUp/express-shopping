@@ -8,6 +8,7 @@ import { createCallbackSignature } from '../../src/middlewares/paymentCallback.j
 import { adjustInventory, createProduct } from '../../src/services/adminCatalogService.js'
 import { platformOverview } from '../../src/services/analyticsService.js'
 import {
+	confirmReturn,
 	createAfterSale,
 	createRefund,
 	mockRefund,
@@ -16,6 +17,7 @@ import {
 	resolveArbitration,
 	retryRefund,
 	reviewAfterSale,
+	submitReturnShipment,
 } from '../../src/services/afterSaleService.js'
 import { purgeExpiredData } from '../../src/services/dataRetentionService.js'
 import { checkoutPreview } from '../../src/services/cartService.js'
@@ -525,6 +527,11 @@ describe.sequential('MySQL integration', () => {
 			reason: '商户售后隔离测试',
 			items: [{ orderItemId: paidOrder.items[0].id, quantity: 1 }],
 		})
+		const merchantAfterSaleOutboxes = await prisma.notificationOutbox.findMany({
+			where: { eventKey: `MERCHANT_AFTER_SALE_CREATED:${afterSale.id}` },
+		})
+		expect(merchantAfterSaleOutboxes.map((item) => item.userId).sort()).toEqual([applicant.id, manager.id].sort())
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 2, failedCount: 0 })
 		const merchantAfterSales = await request(app)
 			.get(`/api/v1/merchant/after-sales?shopId=${shop.id}`)
 			.set('authorization', `Bearer ${applicantToken}`)
@@ -544,6 +551,12 @@ describe.sequential('MySQL integration', () => {
 			.set('authorization', `Bearer ${applicantToken}`)
 			.send({ shopId: shop.id, id: afterSale.id, action: 'REJECT', remark: '恢复订单继续履约' })
 			.expect(200)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		expect(
+			await prisma.userNotification.findFirst({
+				where: { userId: outsider.id, eventKey: `AFTER_SALE_REVIEWED:${afterSale.id}` },
+			})
+		).toMatchObject({ type: 'AFTER_SALE_REJECTED' })
 
 		const merchantOrders = await request(app)
 			.get(`/api/v1/merchant/orders?shopId=${shop.id}`)
@@ -860,6 +873,69 @@ describe.sequential('MySQL integration', () => {
 			pendingAmount: 0,
 		})
 		expect(await prisma.merchantLedgerEntry.count({ where: { orderId: order.id } })).toBe(3)
+	})
+
+	it('notifies both sides through the return-refund progress', async () => {
+		const { shop, userRole, adminRole } = await seedBase()
+		const [buyer, merchantOwner] = await Promise.all([
+			createUser(userRole, 'return-progress-buyer'),
+			createUser(adminRole, 'return-progress-merchant'),
+		])
+		await prisma.merchantMember.create({
+			data: { merchantId: shop.merchantId, userId: merchantOwner.id, role: 'OWNER' },
+		})
+		const sku = await createActiveProduct(merchantOwner.id, 1, shop.id)
+		const order = await createPaidOrder(buyer, sku, 1, 'return-progress-order')
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 2, failedCount: 0 })
+		await prisma.order.update({ where: { id: order.id }, data: { status: 'SHIPPED', shippedAt: new Date() } })
+
+		const { afterSale } = await createAfterSale(buyer.id, {
+			clientRequestId: 'return-progress-after-sale',
+			orderId: order.id,
+			type: 'RETURN_REFUND',
+			reason: '商品存在质量问题',
+			items: [{ orderItemId: order.items[0].id, quantity: 1 }],
+		})
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+
+		await reviewAfterSale(afterSale.id, { action: 'APPROVE', remark: '同意退货退款' }, merchantOwner.id, shop.id)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		await expect(
+			reviewAfterSale(afterSale.id, { action: 'APPROVE', remark: '重复审核' }, merchantOwner.id, shop.id)
+		).rejects.toMatchObject({ statusCode: 409 })
+
+		await submitReturnShipment(buyer.id, afterSale.id, {
+			carrierCode: 'SF',
+			carrierName: '顺丰速运',
+			trackingNumber: 'SF-RETURN-001',
+		})
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		await expect(
+			submitReturnShipment(buyer.id, afterSale.id, {
+				carrierCode: 'SF',
+				carrierName: '顺丰速运',
+				trackingNumber: 'SF-RETURN-001',
+			})
+		).rejects.toMatchObject({ statusCode: 409 })
+
+		await confirmReturn(afterSale.id, merchantOwner.id, shop.id)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		await expect(confirmReturn(afterSale.id, merchantOwner.id, shop.id)).rejects.toMatchObject({ statusCode: 409 })
+
+		const buyerTypes = (
+			await prisma.userNotification.findMany({ where: { userId: buyer.id, referenceId: afterSale.id } })
+		)
+			.map((item) => item.type)
+			.sort()
+		expect(buyerTypes).toEqual(['AFTER_SALE_APPROVED', 'AFTER_SALE_RETURN_CONFIRMED'])
+		const merchantTypes = (
+			await prisma.userNotification.findMany({ where: { userId: merchantOwner.id, referenceId: afterSale.id } })
+		)
+			.map((item) => item.type)
+			.sort()
+		expect(merchantTypes).toEqual(['MERCHANT_AFTER_SALE_CREATED', 'MERCHANT_AFTER_SALE_RETURNED'])
+		expect(await prisma.afterSale.findUnique({ where: { id: afterSale.id } })).toMatchObject({ status: 'REFUNDING' })
+		expect(await prisma.inventory.findUnique({ where: { skuId: sku.id } })).toMatchObject({ available: 1, locked: 0 })
 	})
 
 	it('retries a failed channel refund without creating another refund record', async () => {
