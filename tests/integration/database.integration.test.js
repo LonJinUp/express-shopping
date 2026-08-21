@@ -191,6 +191,127 @@ describe.sequential('MySQL integration', () => {
 			.expect(403)
 	})
 
+	it('completes the full HTTP mock-payment commerce flow', async () => {
+		const { shop, userRole } = await seedBase()
+		const [buyer, merchantOwner] = await Promise.all([
+			createUser(userRole, 'flow-buyer'),
+			createUser(userRole, 'flow-merchant'),
+		])
+		await prisma.merchantMember.create({
+			data: { merchantId: shop.merchantId, userId: merchantOwner.id, role: 'OWNER' },
+		})
+		const sku = await createActiveProduct(merchantOwner.id, 2, shop.id)
+		const login = async (user) => {
+			const response = await request(app)
+				.post('/api/v1/auth/login')
+				.send({ identifier: user.email, password: 'password123' })
+				.expect(200)
+			return response.body.data.accessToken
+		}
+		const [buyerToken, merchantToken] = await Promise.all([login(buyer), login(merchantOwner)])
+
+		const preview = await request(app)
+			.post('/api/v1/checkout/direct-preview')
+			.set('authorization', `Bearer ${buyerToken}`)
+			.send({ addressId: buyer.addresses[0].id, skuId: sku.id, quantity: 1 })
+			.expect(200)
+		expect(preview.body.data).toMatchObject({ goodsAmount: 9900, payableAmount: 9900 })
+
+		const orderInput = {
+			source: 'DIRECT',
+			clientRequestId: 'http-mock-flow-order-001',
+			addressId: buyer.addresses[0].id,
+			skuId: sku.id,
+			quantity: 1,
+			buyerMessage: '请尽快发货',
+		}
+		const created = await request(app)
+			.post('/api/v1/orders/create')
+			.set('authorization', `Bearer ${buyerToken}`)
+			.send(orderInput)
+			.expect(201)
+		const order = created.body.data
+		expect(order).toMatchObject({ status: 'PENDING_PAYMENT', payableAmount: 9900 })
+		const repeatedOrder = await request(app)
+			.post('/api/v1/orders/create')
+			.set('authorization', `Bearer ${buyerToken}`)
+			.send(orderInput)
+			.expect(200)
+		expect(repeatedOrder.body.data.id).toBe(order.id)
+
+		const paymentInput = { orderId: order.id, clientRequestId: 'http-mock-flow-payment-001' }
+		const payment = await request(app)
+			.post('/api/v1/payments/mock-pay')
+			.set('authorization', `Bearer ${buyerToken}`)
+			.send(paymentInput)
+			.expect(200)
+		expect(payment.body.data).toMatchObject({ status: 'SUCCESS', channel: 'MOCK', amount: 9900 })
+		const repeatedPayment = await request(app)
+			.post('/api/v1/payments/mock-pay')
+			.set('authorization', `Bearer ${buyerToken}`)
+			.send(paymentInput)
+			.expect(200)
+		expect(repeatedPayment.body.data.id).toBe(payment.body.data.id)
+
+		await request(app)
+			.post('/api/v1/merchant/orders/accept')
+			.set('authorization', `Bearer ${merchantToken}`)
+			.send({ shopId: shop.id, id: order.id })
+			.expect(200)
+		await request(app)
+			.post('/api/v1/merchant/orders/ship')
+			.set('authorization', `Bearer ${merchantToken}`)
+			.send({
+				shopId: shop.id,
+				id: order.id,
+				carrierCode: 'SF',
+				carrierName: '顺丰速运',
+				trackingNumber: 'SF-MOCK-FLOW-001',
+			})
+			.expect(200)
+		await request(app)
+			.post('/api/v1/orders/confirm-receipt')
+			.set('authorization', `Bearer ${buyerToken}`)
+			.send({ id: order.id })
+			.expect(200)
+
+		const review = await request(app)
+			.post('/api/v1/reviews/create')
+			.set('authorization', `Bearer ${buyerToken}`)
+			.send({
+				orderItemId: order.items[0].id,
+				rating: 5,
+				content: 'Mock 支付购物流程验收通过',
+				isAnonymous: false,
+				images: [],
+			})
+			.expect(201)
+		expect(review.body.data).toMatchObject({ rating: 5, status: 'PENDING' })
+
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 3, failedCount: 0 })
+		const [savedOrder, inventory, ledger, account, buyerNotifications, merchantNotifications] = await Promise.all([
+			prisma.order.findUnique({ where: { id: order.id }, include: { shipment: true, logs: true } }),
+			prisma.inventory.findUnique({ where: { skuId: sku.id } }),
+			prisma.merchantLedgerEntry.findFirst({ where: { orderId: order.id, type: 'PAYMENT' } }),
+			prisma.merchantAccount.findUnique({ where: { merchantId: shop.merchantId } }),
+			prisma.userNotification.findMany({ where: { userId: buyer.id, referenceId: order.id } }),
+			prisma.userNotification.findMany({ where: { userId: merchantOwner.id, referenceId: order.id } }),
+		])
+		expect(savedOrder).toMatchObject({
+			status: 'COMPLETED',
+			paidAmount: 9900,
+			shipment: { trackingNumber: 'SF-MOCK-FLOW-001' },
+		})
+		expect(savedOrder.logs.map((item) => item.action)).toEqual(
+			expect.arrayContaining(['CREATE', 'PAY', 'ACCEPT', 'SHIP', 'CONFIRM_RECEIPT'])
+		)
+		expect(inventory).toMatchObject({ available: 1, locked: 0 })
+		expect(ledger).toMatchObject({ grossAmount: 9900, commissionAmount: 495, netAmount: 9405 })
+		expect(account).toMatchObject({ pendingAmount: 9405 })
+		expect(buyerNotifications.map((item) => item.type).sort()).toEqual(['ORDER_PAID', 'ORDER_SHIPPED'])
+		expect(merchantNotifications.map((item) => item.type)).toEqual(['MERCHANT_ORDER_PAID'])
+	})
+
 	it('onboards a merchant and isolates shop management permissions', async () => {
 		const { userRole, adminRole } = await seedBase()
 		const [applicant, outsider, manager, staff] = await Promise.all([

@@ -16,6 +16,7 @@
 		"prepare": "husky",
 		"test": "vitest run --exclude tests/integration/**",
 		"test:integration": "sh scripts/test-integration.sh",
+		"test:flow": "sh scripts/test-integration.sh -t \"completes the full HTTP mock-payment commerce flow\"",
 		"test:performance": "sh scripts/test-performance.sh",
 		"db:backup": "sh scripts/db-backup.sh",
 		"db:restore": "sh scripts/db-restore.sh",

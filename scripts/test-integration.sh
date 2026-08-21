@@ -29,4 +29,4 @@ fi
 
 DATABASE_URL="$TEST_DATABASE_URL" npx prisma migrate deploy
 NODE_ENV=test DATABASE_URL="$TEST_DATABASE_URL" TASKS_ENABLED=false LOG_LEVEL=error \
-	npx vitest run tests/integration --maxWorkers=1
+	npx vitest run tests/integration --maxWorkers=1 "$@"
