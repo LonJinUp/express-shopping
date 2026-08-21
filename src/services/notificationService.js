@@ -18,8 +18,8 @@ export function enqueueNotification(tx, input) {
 			userId: input.userId,
 			type: input.type,
 			payload: {
-				title: input.title,
-				content: input.content,
+				title: input.title.slice(0, 120),
+				content: input.content.slice(0, 500),
 				referenceType: input.referenceType ?? null,
 				referenceId: input.referenceId ?? null,
 			},

@@ -258,6 +258,45 @@ describe.sequential('MySQL integration', () => {
 			.set('authorization', `Bearer ${adminToken}`)
 			.send({ id: created.body.data.application.id, action: 'APPROVE' })
 			.expect(409)
+		expect(await prisma.notificationOutbox.count({ where: { userId: applicant.id } })).toBe(1)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		const applicationNotifications = await request(app)
+			.get('/api/v1/notifications')
+			.set('authorization', `Bearer ${applicantToken}`)
+			.expect(200)
+		expect(applicationNotifications.body.data.items[0]).toMatchObject({
+			type: 'MERCHANT_APPLICATION_APPROVED',
+			referenceId: created.body.data.application.id,
+		})
+
+		const rejectedApplication = await request(app)
+			.post('/api/v1/merchant-applications/create')
+			.set('authorization', `Bearer ${outsiderToken}`)
+			.send({
+				...input,
+				clientRequestId: 'merchant-application-rejected-001',
+				merchantName: '待驳回商户',
+				merchantCode: 'REJECTED_MERCHANT',
+				shopName: '待驳回店铺',
+				shopCode: 'REJECTED_SHOP',
+			})
+			.expect(201)
+		await request(app)
+			.post('/api/v1/admin/merchant-applications/review')
+			.set('authorization', `Bearer ${adminToken}`)
+			.send({ id: rejectedApplication.body.data.application.id, action: 'REJECT', reason: '资质材料不完整' })
+			.expect(200)
+		await request(app)
+			.post('/api/v1/admin/merchant-applications/review')
+			.set('authorization', `Bearer ${adminToken}`)
+			.send({ id: rejectedApplication.body.data.application.id, action: 'REJECT', reason: '重复审核' })
+			.expect(409)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 1, failedCount: 0 })
+		expect(
+			await prisma.userNotification.findFirst({
+				where: { userId: outsider.id, referenceId: rejectedApplication.body.data.application.id },
+			})
+		).toMatchObject({ type: 'MERCHANT_APPLICATION_REJECTED' })
 
 		const shops = await request(app)
 			.get('/api/v1/merchant/shops')
@@ -1041,13 +1080,39 @@ describe.sequential('MySQL integration', () => {
 		expect(secondWithdrawal.duplicated).toBe(true)
 		await reviewWithdrawal(firstWithdrawal.withdrawal.id, 'APPROVE', '审核通过', admin.id)
 		await reviewWithdrawal(firstWithdrawal.withdrawal.id, 'COMPLETE', '银行打款完成', admin.id)
+		const rejectedWithdrawal = await createWithdrawal(shop.merchantId, admin.id, {
+			clientRequestId: 'finance-withdrawal-rejected-001',
+			amount: 1000,
+			accountInfo: { bankName: '测试银行', accountName: '测试商户', accountNo: '6222000099999999' },
+		})
+		await reviewWithdrawal(rejectedWithdrawal.withdrawal.id, 'REJECT', '收款账户信息不完整', admin.id)
+		await expect(
+			reviewWithdrawal(rejectedWithdrawal.withdrawal.id, 'REJECT', '重复驳回', admin.id)
+		).rejects.toMatchObject({ statusCode: 409 })
 		expect(await prisma.merchantAccount.findUnique({ where: { merchantId: shop.merchantId } })).toMatchObject({
 			pendingAmount: 0,
 			availableAmount: 4405,
 			frozenAmount: 0,
 			withdrawnAmount: 5000,
 		})
-		expect(await prisma.merchantLedgerEntry.count({ where: { merchantId: shop.merchantId } })).toBe(4)
+		expect(await prisma.merchantLedgerEntry.count({ where: { merchantId: shop.merchantId } })).toBe(6)
+		expect(
+			await prisma.notificationOutbox.count({
+				where: {
+					userId: admin.id,
+					type: { in: ['WITHDRAWAL_APPROVED', 'WITHDRAWAL_COMPLETED', 'WITHDRAWAL_REJECTED'] },
+				},
+			})
+		).toBe(3)
+		expect(await processNotificationOutbox()).toEqual({ processedCount: 4, failedCount: 0 })
+		const financeNotifications = await prisma.userNotification.findMany({
+			where: { userId: admin.id, referenceType: 'MERCHANT_WITHDRAWAL' },
+		})
+		expect(financeNotifications.map((item) => item.type).sort()).toEqual([
+			'WITHDRAWAL_APPROVED',
+			'WITHDRAWAL_COMPLETED',
+			'WITHDRAWAL_REJECTED',
+		])
 	})
 
 	it('purges expired personal and operational data while retaining current records', async () => {

@@ -3,6 +3,7 @@ import { prisma } from '../config/prisma.js'
 import { ERROR_CODES } from '../constants/errorCodes.js'
 import { AppError } from '../errors/AppError.js'
 import { createSettlementNo, createWithdrawalNo } from '../utils/transactionNo.js'
+import { enqueueNotification } from './notificationService.js'
 
 function conflict(message) {
 	return new AppError(message, { statusCode: 409, code: ERROR_CODES.CONFLICT })
@@ -372,10 +373,20 @@ export async function reviewWithdrawal(id, action, remark, reviewerId) {
 			await tx.$queryRaw`SELECT merchantId FROM MerchantAccount WHERE merchantId = ${withdrawal.merchantId} FOR UPDATE`
 			if (action === 'APPROVE') {
 				if (withdrawal.status !== 'PENDING') throw conflict('提现申请已处理')
-				return tx.merchantWithdrawal.update({
+				const updated = await tx.merchantWithdrawal.update({
 					where: { id },
 					data: { status: 'APPROVED', reviewerId, reviewRemark: remark, reviewedAt: new Date() },
 				})
+				await enqueueNotification(tx, {
+					eventKey: `WITHDRAWAL_APPROVED:${id}`,
+					userId: withdrawal.requestedById,
+					type: 'WITHDRAWAL_APPROVED',
+					title: '提现申请已通过',
+					content: `提现单 ${withdrawal.withdrawalNo} 已审核通过，金额 ${withdrawal.amount} 分，等待平台打款。`,
+					referenceType: 'MERCHANT_WITHDRAWAL',
+					referenceId: id,
+				})
+				return updated
 			}
 			if (action === 'REJECT') {
 				if (withdrawal.status !== 'PENDING') throw conflict('提现申请已处理')
@@ -394,10 +405,20 @@ export async function reviewWithdrawal(id, action, remark, reviewerId) {
 						remark,
 					},
 				})
-				return tx.merchantWithdrawal.update({
+				const updated = await tx.merchantWithdrawal.update({
 					where: { id },
 					data: { status: 'REJECTED', reviewerId, reviewRemark: remark, reviewedAt: new Date() },
 				})
+				await enqueueNotification(tx, {
+					eventKey: `WITHDRAWAL_REJECTED:${id}`,
+					userId: withdrawal.requestedById,
+					type: 'WITHDRAWAL_REJECTED',
+					title: '提现申请未通过',
+					content: `提现单 ${withdrawal.withdrawalNo} 未通过审核：${remark}`,
+					referenceType: 'MERCHANT_WITHDRAWAL',
+					referenceId: id,
+				})
+				return updated
 			}
 			if (withdrawal.status !== 'APPROVED') throw conflict('只有已批准的提现可以完成打款')
 			await tx.merchantAccount.update({
@@ -415,10 +436,20 @@ export async function reviewWithdrawal(id, action, remark, reviewerId) {
 					remark,
 				},
 			})
-			return tx.merchantWithdrawal.update({
+			const updated = await tx.merchantWithdrawal.update({
 				where: { id },
 				data: { status: 'COMPLETED', reviewerId, reviewRemark: remark, completedAt: new Date() },
 			})
+			await enqueueNotification(tx, {
+				eventKey: `WITHDRAWAL_COMPLETED:${id}`,
+				userId: withdrawal.requestedById,
+				type: 'WITHDRAWAL_COMPLETED',
+				title: '提现已完成',
+				content: `提现单 ${withdrawal.withdrawalNo} 已完成打款，金额 ${withdrawal.amount} 分。`,
+				referenceType: 'MERCHANT_WITHDRAWAL',
+				referenceId: id,
+			})
+			return updated
 		},
 		{ isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
 	)

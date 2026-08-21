@@ -1,6 +1,7 @@
 import { prisma } from '../config/prisma.js'
 import { ERROR_CODES } from '../constants/errorCodes.js'
 import { AppError } from '../errors/AppError.js'
+import { enqueueNotification } from './notificationService.js'
 
 const applicationSelect = {
 	id: true,
@@ -93,6 +94,15 @@ export async function reviewApplication(id, input, reviewerId) {
 				data: { status: 'REJECTED', rejectReason: input.reason, reviewedById: reviewerId, reviewedAt: new Date() },
 			})
 			if (updated.count !== 1) throw conflict('该入驻申请已处理')
+			await enqueueNotification(tx, {
+				eventKey: `MERCHANT_APPLICATION_REVIEWED:${id}`,
+				userId: application.userId,
+				type: 'MERCHANT_APPLICATION_REJECTED',
+				title: '商户入驻申请未通过',
+				content: `商户“${application.merchantName}”的入驻申请未通过：${input.reason}`,
+				referenceType: 'MERCHANT_APPLICATION',
+				referenceId: id,
+			})
 			return tx.merchantApplication.findUnique({ where: { id }, select: applicationSelect })
 		}
 
@@ -128,6 +138,15 @@ export async function reviewApplication(id, input, reviewerId) {
 			where: { userId_roleId: { userId: application.userId, roleId: merchantRole.id } },
 			update: {},
 			create: { userId: application.userId, roleId: merchantRole.id },
+		})
+		await enqueueNotification(tx, {
+			eventKey: `MERCHANT_APPLICATION_REVIEWED:${id}`,
+			userId: application.userId,
+			type: 'MERCHANT_APPLICATION_APPROVED',
+			title: '商户入驻申请已通过',
+			content: `商户“${application.merchantName}”已入驻成功，店铺“${application.shopName}”可以开始配置和经营。`,
+			referenceType: 'MERCHANT_APPLICATION',
+			referenceId: id,
 		})
 		return tx.merchantApplication.update({
 			where: { id },
